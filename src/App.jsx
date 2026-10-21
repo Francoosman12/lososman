@@ -22,9 +22,10 @@ const money = (amount) => new Intl.NumberFormat('es-AR', {
 
 const businessCategories = ['Almacén', 'Bebidas', 'Lácteos', 'Fiambres', 'Panadería', 'Verdulería', 'Carnicería', 'Limpieza', 'Higiene personal', 'Golosinas', 'Snacks', 'Congelados', 'Mascotas', 'Otros'];
 
-function CameraScanner({ onScan, onClose }) {
+function CameraScanner({ onScan, onClose, closeAfterScan = false }) {
   const videoRef = useRef(null);
   const onScanRef = useRef(onScan);
+  const onCloseRef = useRef(onClose);
   const scanLockRef = useRef({ code: '', timer: null });
   const controlsRef = useRef(null);
   const [status, setStatus] = useState('Iniciando cámara…');
@@ -32,6 +33,7 @@ function CameraScanner({ onScan, onClose }) {
   const [torch, setTorch] = useState(false);
   const [torchAvailable, setTorchAvailable] = useState(false);
   onScanRef.current = onScan;
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     let cancelled = false;
@@ -53,8 +55,9 @@ function CameraScanner({ onScan, onClose }) {
         window.clearTimeout(scanLockRef.current.timer);
         if (scanLockRef.current.code !== code) {
           scanLockRef.current.code = code;
-          const productName = onScanRef.current(code);
-          setStatus(productName ? `${productName} agregado` : `Código ${code}: producto no encontrado`);
+          const message = onScanRef.current(code);
+          setStatus(message || `Código ${code}: producto no encontrado`);
+          if (message && closeAfterScan) window.setTimeout(() => { if (!cancelled) onCloseRef.current(); }, 250);
         }
         scanLockRef.current.timer = window.setTimeout(() => { scanLockRef.current.code = ''; }, 900);
       });
@@ -100,6 +103,7 @@ function CameraScanner({ onScan, onClose }) {
 
 export default function App() {
   const scannerRef = useRef(null);
+  const productBarcodeRef = useRef(null);
   const [products, setProducts] = useState(demoProducts);
   const [connected, setConnected] = useState(false);
   const [query, setQuery] = useState('');
@@ -112,6 +116,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [productsOpen, setProductsOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraMode, setCameraMode] = useState('sale');
   const [productForm, setProductForm] = useState({ name: '', barcode: '', detail: '', price: '', category: 'Otros' });
   const [editingProduct, setEditingProduct] = useState('');
   const [savingProduct, setSavingProduct] = useState(false);
@@ -165,14 +170,31 @@ export default function App() {
 
   const handleCameraScan = useCallback((barcode) => {
     const normalizedBarcode = (value) => String(value || '').trim().replace(/\s+/g, '');
+    if (cameraMode === 'product') {
+      setProductForm((current) => ({ ...current, barcode: normalizedBarcode(barcode) }));
+      return `Código capturado: ${normalizedBarcode(barcode)}`;
+    }
     const product = products.find((item) => normalizedBarcode(item.barcode) === normalizedBarcode(barcode));
     if (!product) {
       setToast('Producto no encontrado. Buscá el producto o verificá su código');
       return '';
     }
     addProduct(product, { refocus: false });
-    return product.name;
-  }, [products, addProduct]);
+    return `Producto agregado: ${product.name}`;
+  }, [cameraMode, products, addProduct]);
+
+  const closeCamera = () => {
+    setCameraOpen(false);
+    window.requestAnimationFrame(() => {
+      if (cameraMode === 'product') productBarcodeRef.current?.focus({ preventScroll: true });
+      else scannerRef.current?.focus({ preventScroll: true });
+    });
+  };
+
+  const openCamera = (mode) => {
+    setCameraMode(mode);
+    setCameraOpen(true);
+  };
 
   const handleScan = (event) => {
     if (event.key !== 'Enter') return;
@@ -303,7 +325,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      {cameraOpen && <CameraScanner onScan={handleCameraScan} onClose={() => { setCameraOpen(false); focusScanner(); }} />}
+      {cameraOpen && <CameraScanner onScan={handleCameraScan} onClose={closeCamera} closeAfterScan={cameraMode === 'product'} />}
       <header className="topbar">
         <div className="brand-wrap">
           <div className="brand-icon"><Store size={24} strokeWidth={2.6} /></div>
@@ -316,7 +338,7 @@ export default function App() {
       <main className="layout">
         <section className="catalog-column" aria-label="Productos">
           <div className="scanner-card">
-            <div className="camera-entry-row"><span>También podés usar la cámara del celular.</span><button className="camera-scan-button" type="button" onClick={() => setCameraOpen(true)}><Camera size={17} /> Escanear con cámara</button></div>
+            <div className="camera-entry-row"><span>También podés usar la cámara del celular.</span><button className="camera-scan-button" type="button" onClick={() => openCamera('sale')}><Camera size={17} /> Escanear con cámara</button></div>
             <label className="scanner-label" htmlFor="scanner-input"><Barcode size={18} /> BUSCAR O ESCANEAR</label>
             <div className="scanner-control">
               <Search className="search-icon" size={23} />
@@ -376,7 +398,7 @@ export default function App() {
           {!connected && <div className="catalog-warning">MongoDB no está conectado. Los cambios requieren conexión y no se guardarán en modo de prueba.</div>}
           <form className="product-form" onSubmit={submitProduct}>
             <label>Nombre *<input required maxLength="120" value={productForm.name} onChange={(event) => setProductForm({ ...productForm, name: event.target.value })} placeholder="Ej.: Yerba 1 kg" /></label>
-            <label>Código de barras<input maxLength="80" value={productForm.barcode} onChange={(event) => setProductForm({ ...productForm, barcode: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }} placeholder="Escaneá el código acá" autoComplete="off" /></label>
+            <label>Código de barras<div className="barcode-input-row"><input ref={productBarcodeRef} maxLength="80" value={productForm.barcode} onChange={(event) => setProductForm({ ...productForm, barcode: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }} placeholder="Escaneá el código acá" autoComplete="off" /><button className="barcode-camera-button" type="button" onClick={() => openCamera('product')} aria-label="Leer código de barras con la cámara"><Camera size={18} /><span>Cámara</span></button></div></label>
             <label>Precio *<input required type="number" min="0" step="0.01" value={productForm.price} onChange={(event) => setProductForm({ ...productForm, price: event.target.value })} placeholder="0" /></label>
             <label>Categoría<select required value={productForm.category} onChange={(event) => setProductForm({ ...productForm, category: event.target.value })}>{!businessCategories.includes(productForm.category) && productForm.category && <option value={productForm.category}>{productForm.category}</option>}{businessCategories.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
             <label className="product-detail-field">Detalle<input maxLength="240" value={productForm.detail} onChange={(event) => setProductForm({ ...productForm, detail: event.target.value })} placeholder="Presentación, marca, tamaño…" /></label>

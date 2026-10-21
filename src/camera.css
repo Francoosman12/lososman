@@ -23,6 +23,11 @@
 @media(max-width:760px){.camera-entry-row{align-items:flex-start;flex-direction:column;gap:8px;margin-bottom:9px}.camera-scan-button{min-height:40px;padding-inline:14px}.camera-modal{padding:15px;border-radius:14px}.camera-preview{aspect-ratio:3/4;max-height:58vh}.camera-target:before{height:29%}.camera-target i{width:min(72%,340px)}@keyframes camera-scan-line{0%,100%{transform:translateY(-60px)}50%{transform:translateY(60px)}}}
 @media(prefers-reduced-motion:reduce){.camera-target i{animation:none}}
 
+.barcode-input-row{display:flex;align-items:center;gap:7px;width:100%;min-width:0}
+.barcode-input-row input{flex:1;width:0}
+.barcode-camera-button{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:39px;padding:0 11px;border:1px solid #b9d8c4;border-radius:7px;background:#f1f8f3;color:#12683a;font-size:11px;font-weight:800;cursor:pointer}
+.barcode-camera-button:hover{background:#e5f3e9;border-color:#8fc4a0}
+
 /* Tablet layouts keep the catalog and account usable without squeezing either one. */
 @media(min-width:761px) and (max-width:900px){
   .layout{display:flex;flex-direction:column;align-items:stretch;gap:16px;padding:18px 22px 28px}
