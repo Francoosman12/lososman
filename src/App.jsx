@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BadgeCheck, Barcode, Banknote, Check, ChevronDown, CircleHelp, CreditCard,
+  BadgeCheck, Barcode, Banknote, Camera, Check, ChevronDown, CircleHelp, CreditCard,
   Minus, PackagePlus, Pencil, Plus, QrCode, Search, ShoppingBasket, Store, Trash2, X,
 } from 'lucide-react';
 
@@ -22,6 +22,82 @@ const money = (amount) => new Intl.NumberFormat('es-AR', {
 
 const businessCategories = ['Almacén', 'Bebidas', 'Lácteos', 'Fiambres', 'Panadería', 'Verdulería', 'Carnicería', 'Limpieza', 'Higiene personal', 'Golosinas', 'Snacks', 'Congelados', 'Mascotas', 'Otros'];
 
+function CameraScanner({ onScan, onClose }) {
+  const videoRef = useRef(null);
+  const onScanRef = useRef(onScan);
+  const scanLockRef = useRef({ code: '', timer: null });
+  const controlsRef = useRef(null);
+  const [status, setStatus] = useState('Iniciando cámara…');
+  const [error, setError] = useState('');
+  const [torch, setTorch] = useState(false);
+  const [torchAvailable, setTorchAvailable] = useState(false);
+  onScanRef.current = onScan;
+
+  useEffect(() => {
+    let cancelled = false;
+    import('@zxing/browser').then(({ BarcodeFormat, BrowserMultiFormatOneDReader }) => {
+      if (cancelled) return null;
+      const reader = new BrowserMultiFormatOneDReader(undefined, { delayBetweenScanAttempts: 140, delayBetweenScanSuccess: 180, tryPlayVideoTimeout: 8000 });
+      reader.possibleFormats = [BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E, BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.ITF, BarcodeFormat.CODABAR];
+      return reader.decodeFromVideoDevice(undefined, videoRef.current, (result, _decodeError, controls) => {
+        if (cancelled) return;
+        if (!controlsRef.current) {
+          controlsRef.current = controls;
+          const track = videoRef.current?.srcObject?.getVideoTracks?.()[0];
+          setTorchAvailable(Boolean(track && 'torch' in (track.getCapabilities?.() || {})));
+          setStatus('Cámara lista · enfocá el código dentro del marco');
+        }
+        if (!result) return;
+        const code = result.getText().trim();
+        if (!code) return;
+        window.clearTimeout(scanLockRef.current.timer);
+        if (scanLockRef.current.code !== code) {
+          scanLockRef.current.code = code;
+          const productName = onScanRef.current(code);
+          setStatus(productName ? `${productName} agregado` : `Código ${code}: producto no encontrado`);
+        }
+        scanLockRef.current.timer = window.setTimeout(() => { scanLockRef.current.code = ''; }, 900);
+      });
+    }).then((controls) => {
+      if (!controls) return;
+      if (cancelled) controls.stop();
+      else controlsRef.current = controls;
+    }).catch((cameraError) => {
+      if (cancelled) return;
+      const messages = {
+        NotAllowedError: 'Permití el acceso a la cámara en el navegador y volvé a intentar.',
+        NotFoundError: 'No encontramos una cámara disponible en este dispositivo.',
+        NotReadableError: 'La cámara está siendo usada por otra aplicación.',
+        OverconstrainedError: 'No se pudo iniciar la cámara trasera. Probá con otra cámara.',
+      };
+      setError(messages[cameraError?.name] || 'No se pudo iniciar la cámara. Verificá los permisos e intentá otra vez.');
+      setStatus('Cámara no disponible');
+    });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(scanLockRef.current.timer);
+      controlsRef.current?.stop();
+    };
+  }, []);
+
+  const toggleTorch = async () => {
+    if (!controlsRef.current?.switchTorch) return;
+    try { await controlsRef.current.switchTorch(!torch); setTorch(!torch); }
+    catch { setError('La linterna no está disponible en esta cámara.'); }
+  };
+
+  return (
+    <div className="modal-backdrop camera-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="camera-modal" role="dialog" aria-modal="true" aria-labelledby="camera-title">
+        <div className="modal-heading"><div><h2 id="camera-title">Escanear con cámara</h2><p>Usá la cámara trasera y acercá el código al marco.</p></div><button className="modal-close" type="button" onClick={onClose} aria-label="Cerrar cámara"><X size={20} /></button></div>
+        <div className="camera-preview"><video ref={videoRef} muted playsInline aria-label="Vista previa de la cámara" />{!error && <div className="camera-target" aria-hidden="true"><i /></div>}{error && <div className="camera-error"><Camera size={25} /><span>{error}</span><small>La cámara requiere permiso del navegador y una conexión segura (HTTPS o localhost).</small></div>}</div>
+        <div className={`camera-status ${error ? 'camera-status-error' : ''}`} role="status"><span />{error || status}</div>
+        <div className="camera-actions">{torchAvailable && <button type="button" className="camera-torch" onClick={toggleTorch}>{torch ? 'Apagar linterna' : 'Encender linterna'}</button>}<button type="button" className="camera-done" onClick={onClose}>Listo</button></div>
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
   const scannerRef = useRef(null);
   const [products, setProducts] = useState(demoProducts);
@@ -35,6 +111,7 @@ export default function App() {
   const [paid, setPaid] = useState('');
   const [busy, setBusy] = useState(false);
   const [productsOpen, setProductsOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [productForm, setProductForm] = useState({ name: '', barcode: '', detail: '', price: '', category: 'Otros' });
   const [editingProduct, setEditingProduct] = useState('');
   const [savingProduct, setSavingProduct] = useState(false);
@@ -74,7 +151,7 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [toast, pendingBarcode]);
 
-  const addProduct = useCallback((product) => {
+  const addProduct = useCallback((product, { refocus = true } = {}) => {
     const wasInCart = cart.some((row) => row.productId === product._id);
     setCart((current) => {
       if (current.some((row) => row.productId === product._id)) return current.map((row) => row.productId === product._id ? { ...row, quantity: row.quantity + 1 } : row);
@@ -83,8 +160,19 @@ export default function App() {
     setToast(wasInCart ? 'Cantidad actualizada' : 'Producto agregado');
     setQuery('');
     setCategory('Todos');
-    focusScanner();
+    if (refocus) focusScanner();
   }, [cart, focusScanner]);
+
+  const handleCameraScan = useCallback((barcode) => {
+    const normalizedBarcode = (value) => String(value || '').trim().replace(/\s+/g, '');
+    const product = products.find((item) => normalizedBarcode(item.barcode) === normalizedBarcode(barcode));
+    if (!product) {
+      setToast('Producto no encontrado. Buscá el producto o verificá su código');
+      return '';
+    }
+    addProduct(product, { refocus: false });
+    return product.name;
+  }, [products, addProduct]);
 
   const handleScan = (event) => {
     if (event.key !== 'Enter') return;
@@ -215,6 +303,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {cameraOpen && <CameraScanner onScan={handleCameraScan} onClose={() => { setCameraOpen(false); focusScanner(); }} />}
       <header className="topbar">
         <div className="brand-wrap">
           <div className="brand-icon"><Store size={24} strokeWidth={2.6} /></div>
@@ -227,6 +316,7 @@ export default function App() {
       <main className="layout">
         <section className="catalog-column" aria-label="Productos">
           <div className="scanner-card">
+            <div className="camera-entry-row"><span>También podés usar la cámara del celular.</span><button className="camera-scan-button" type="button" onClick={() => setCameraOpen(true)}><Camera size={17} /> Escanear con cámara</button></div>
             <label className="scanner-label" htmlFor="scanner-input"><Barcode size={18} /> BUSCAR O ESCANEAR</label>
             <div className="scanner-control">
               <Search className="search-icon" size={23} />
