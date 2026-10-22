@@ -27,6 +27,8 @@
 .barcode-input-row input{flex:1;width:0}
 .barcode-camera-button{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:39px;padding:0 11px;border:1px solid #b9d8c4;border-radius:7px;background:#f1f8f3;color:#12683a;font-size:11px;font-weight:800;cursor:pointer}
 .barcode-camera-button:hover{background:#e5f3e9;border-color:#8fc4a0}
+.quick-camera-button{display:none}
+.product-card-recent{scroll-margin-top:84px;border-color:#07803e!important;box-shadow:0 0 0 3px #07803e30,0 8px 22px #07803e20!important}
 
 /* Tablet layouts keep the catalog and account usable without squeezing either one. */
 @media(min-width:761px) and (max-width:900px){
@@ -42,6 +44,7 @@
   .brand-wrap{min-width:0;gap:8px}
   .brand-name{font-size:16px}
   .topbar-actions{flex:none}
+  .quick-camera-button{position:absolute;right:161px;top:50%;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:0 10px;border:1px solid #b9d8c4;border-radius:8px;background:#f1f8f3;color:#12683a;font-size:10px;font-weight:800;transform:translateY(-50%)}
   .layout{min-height:calc(100dvh - 64px);padding:12px 12px calc(96px + env(safe-area-inset-bottom));gap:12px}
   .scanner-card{padding:11px}
   .camera-entry-row{align-items:center;flex-direction:row;gap:8px;margin-bottom:9px;font-size:10px}
@@ -70,6 +73,8 @@
   .brand-subtitle{font-size:9px}
   .topbar-actions .manage-button,.topbar-actions .help-button{width:36px;height:36px;justify-content:center;padding:0;font-size:0}
   .topbar-actions .manage-button svg,.topbar-actions .help-button svg{width:17px;height:17px}
+  .quick-camera-button{right:95px;width:36px;padding:0;font-size:0}
+  .quick-camera-button svg{width:17px;height:17px}
   .cart-row{grid-template-columns:minmax(0,1fr) auto auto 34px;gap:5px}
   .products-modal{padding:14px}
   .admin-list-heading{align-items:flex-start;gap:6px;flex-direction:column}

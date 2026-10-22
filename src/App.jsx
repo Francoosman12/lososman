@@ -22,6 +22,8 @@ const money = (amount) => new Intl.NumberFormat('es-AR', {
 
 const businessCategories = ['Almacén', 'Bebidas', 'Lácteos', 'Fiambres', 'Panadería', 'Verdulería', 'Carnicería', 'Limpieza', 'Higiene personal', 'Golosinas', 'Snacks', 'Congelados', 'Mascotas', 'Otros'];
 
+const preloadCameraDecoder = () => { import('@zxing/browser').catch(() => {}); };
+
 function CameraScanner({ onScan, onClose, closeAfterScan = false }) {
   const videoRef = useRef(null);
   const onScanRef = useRef(onScan);
@@ -39,9 +41,9 @@ function CameraScanner({ onScan, onClose, closeAfterScan = false }) {
     let cancelled = false;
     import('@zxing/browser').then(({ BarcodeFormat, BrowserMultiFormatOneDReader }) => {
       if (cancelled) return null;
-      const reader = new BrowserMultiFormatOneDReader(undefined, { delayBetweenScanAttempts: 140, delayBetweenScanSuccess: 180, tryPlayVideoTimeout: 8000 });
+      const reader = new BrowserMultiFormatOneDReader(undefined, { delayBetweenScanAttempts: 65, delayBetweenScanSuccess: 0, tryPlayVideoTimeout: 8000 });
       reader.possibleFormats = [BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E, BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.ITF, BarcodeFormat.CODABAR];
-      return reader.decodeFromVideoDevice(undefined, videoRef.current, (result, _decodeError, controls) => {
+      return reader.decodeFromConstraints({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } }, videoRef.current, (result, _decodeError, controls) => {
         if (cancelled) return;
         if (!controlsRef.current) {
           controlsRef.current = controls;
@@ -57,7 +59,7 @@ function CameraScanner({ onScan, onClose, closeAfterScan = false }) {
           scanLockRef.current.code = code;
           const message = onScanRef.current(code);
           setStatus(message || `Código ${code}: producto no encontrado`);
-          if (message && closeAfterScan) window.setTimeout(() => { if (!cancelled) onCloseRef.current(); }, 250);
+          if (message && closeAfterScan) window.setTimeout(() => { if (!cancelled) onCloseRef.current(); }, 100);
         }
         scanLockRef.current.timer = window.setTimeout(() => { scanLockRef.current.code = ''; }, 900);
       });
@@ -117,6 +119,8 @@ export default function App() {
   const [productsOpen, setProductsOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraMode, setCameraMode] = useState('sale');
+  const [recentProductId, setRecentProductId] = useState('');
+  const productCardRefs = useRef(new Map());
   const [productForm, setProductForm] = useState({ name: '', barcode: '', detail: '', price: '', category: 'Otros' });
   const [editingProduct, setEditingProduct] = useState('');
   const [savingProduct, setSavingProduct] = useState(false);
@@ -139,6 +143,7 @@ export default function App() {
   useEffect(() => {
     focusScanner();
     let active = true;
+    const cameraWarmup = window.setTimeout(preloadCameraDecoder, 600);
     Promise.all([
       fetch('/api/health').then((response) => response.ok ? response.json() : null),
       fetch('/api/products').then((response) => response.ok ? response.json() : null),
@@ -147,7 +152,7 @@ export default function App() {
       setConnected(health?.database === true);
       if (Array.isArray(data)) setProducts(data);
     }).catch(() => { if (active) setConnected(false); });
-    return () => { active = false; };
+    return () => { active = false; window.clearTimeout(cameraWarmup); };
   }, [focusScanner]);
 
   useEffect(() => {
@@ -155,6 +160,13 @@ export default function App() {
     const timer = window.setTimeout(() => { setToast(''); setPendingBarcode(''); }, pendingBarcode ? 7000 : 2200);
     return () => window.clearTimeout(timer);
   }, [toast, pendingBarcode]);
+
+  useEffect(() => {
+    if (cameraOpen || !recentProductId) return undefined;
+    const frame = window.requestAnimationFrame(() => productCardRefs.current.get(String(recentProductId))?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    const timer = window.setTimeout(() => setRecentProductId(''), 2600);
+    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
+  }, [cameraOpen, recentProductId]);
 
   const addProduct = useCallback((product, { refocus = true } = {}) => {
     const wasInCart = cart.some((row) => row.productId === product._id);
@@ -180,6 +192,9 @@ export default function App() {
       return '';
     }
     addProduct(product, { refocus: false });
+    setQuery(product.name);
+    setCategory('Todos');
+    setRecentProductId(String(product._id));
     return `Producto agregado: ${product.name}`;
   }, [cameraMode, products, addProduct]);
 
@@ -187,11 +202,13 @@ export default function App() {
     setCameraOpen(false);
     window.requestAnimationFrame(() => {
       if (cameraMode === 'product') productBarcodeRef.current?.focus({ preventScroll: true });
-      else scannerRef.current?.focus({ preventScroll: true });
+      else if (!recentProductId) scannerRef.current?.focus({ preventScroll: true });
     });
   };
 
   const openCamera = (mode) => {
+    preloadCameraDecoder();
+    setRecentProductId('');
     setCameraMode(mode);
     setCameraOpen(true);
   };
@@ -325,7 +342,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      {cameraOpen && <CameraScanner onScan={handleCameraScan} onClose={closeCamera} closeAfterScan={cameraMode === 'product'} />}
+      {cameraOpen && <CameraScanner onScan={handleCameraScan} onClose={closeCamera} closeAfterScan />}
       <header className="topbar">
         <div className="brand-wrap">
           <div className="brand-icon"><Store size={24} strokeWidth={2.6} /></div>
@@ -333,6 +350,7 @@ export default function App() {
           <span className={`connection-pill ${connected ? 'is-live' : ''}`}><span />{connected ? 'Sistema conectado' : 'Modo de prueba'}</span>
         </div>
         <div className="topbar-actions"><button className="manage-button" type="button" onClick={() => setProductsOpen(true)}><PackagePlus size={17} /> Productos</button><button className="help-button" type="button" onClick={() => setToast('Escaneá un producto o buscá por nombre. Luego tocá Cobrar.') }><CircleHelp size={19} /> Ayuda</button></div>
+        <button className="quick-camera-button" type="button" onClick={() => openCamera('sale')} aria-label="Escanear un producto" title="Escanear un producto"><Camera size={18} /><span>Escanear</span></button>
       </header>
 
       <main className="layout">
@@ -359,7 +377,7 @@ export default function App() {
           </div>
 
           {visibleProducts.length ? <div className="product-grid">
-            {visibleProducts.map((product) => <button type="button" className="product-card" key={product._id} onClick={() => addProduct(product)}>
+          {visibleProducts.map((product) => <button type="button" className={`product-card ${recentProductId === String(product._id) ? 'product-card-recent' : ''}`} key={product._id} ref={(element) => { if (element) productCardRefs.current.set(String(product._id), element); else productCardRefs.current.delete(String(product._id)); }} onClick={() => addProduct(product)}>
               <div className="product-card-top"><span className="product-category">{product.category}</span><span className="add-icon"><Plus size={19} /></span></div>
               <span className="product-title">{product.name}</span>
               <span className="product-detail">{product.detail || `Código ${product.barcode || 'sin código'}`}</span>
