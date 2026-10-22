@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BadgeCheck, Barcode, Banknote, Camera, Check, ChevronDown, CircleHelp, CreditCard,
-  Minus, PackagePlus, Pencil, Plus, QrCode, Search, ShoppingBasket, Store, Trash2, X,
+  Menu, Minus, PackagePlus, Pencil, Plus, QrCode, Search, ShoppingBasket, Store, Trash2, X,
 } from 'lucide-react';
 
 const demoProducts = [
@@ -119,6 +119,8 @@ export default function App() {
   const [productsOpen, setProductsOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraMode, setCameraMode] = useState('sale');
+  const [cartOpen, setCartOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [recentProductId, setRecentProductId] = useState('');
   const productCardRefs = useRef(new Map());
   const [productForm, setProductForm] = useState({ name: '', barcode: '', detail: '', price: '', category: 'Otros' });
@@ -135,6 +137,10 @@ export default function App() {
     const matchQuery = !normalizedQuery || `${product.name} ${product.barcode} ${product.category}`.toLocaleLowerCase('es-AR').includes(normalizedQuery);
     return matchCategory && matchQuery;
   }), [products, category, normalizedQuery]);
+
+  useEffect(() => {
+    if (!cart.length) setCartOpen(false);
+  }, [cart.length]);
 
   const focusScanner = useCallback(() => {
     window.requestAnimationFrame(() => scannerRef.current?.focus({ preventScroll: true }));
@@ -265,6 +271,7 @@ export default function App() {
 
   const openPayment = () => {
     if (!cart.length) return;
+    setCartOpen(false);
     setPaymentMethod('Efectivo');
     setPaid(String(total));
     setPaymentOpen(true);
@@ -343,7 +350,23 @@ export default function App() {
   return (
     <div className="app-shell">
       {cameraOpen && <CameraScanner onScan={handleCameraScan} onClose={closeCamera} closeAfterScan />}
+      <aside className="desktop-sidebar" aria-label="Navegación principal">
+        <div className="sidebar-brand"><div className="brand-icon"><Store size={23} /></div><div><strong>LOS OSMAN</strong><span>Punto de venta</span></div></div>
+        <nav className="sidebar-nav">
+          <button type="button" className={!productsOpen ? 'active' : ''} onClick={() => setProductsOpen(false)}><ShoppingBasket size={19} /> Punto de venta</button>
+          <button type="button" className={productsOpen ? 'active' : ''} onClick={() => setProductsOpen(true)}><PackagePlus size={19} /> Productos</button>
+        </nav>
+        <div className={`sidebar-connection ${connected ? 'is-live' : ''}`}><span />{connected ? 'Sistema conectado' : 'Modo de prueba'}</div>
+      </aside>
+      {mobileNavOpen && <div className="mobile-nav-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setMobileNavOpen(false); }}>
+        <nav className="mobile-nav-drawer" aria-label="Navegación principal">
+          <div className="mobile-drawer-heading"><div className="brand-icon"><Store size={22} /></div><strong>LOS OSMAN</strong><button type="button" onClick={() => setMobileNavOpen(false)} aria-label="Cerrar menú"><X size={20} /></button></div>
+          <button type="button" className={!productsOpen ? 'active' : ''} onClick={() => { setProductsOpen(false); setMobileNavOpen(false); }}><ShoppingBasket size={19} /> Punto de venta</button>
+          <button type="button" className={productsOpen ? 'active' : ''} onClick={() => { setProductsOpen(true); setMobileNavOpen(false); }}><PackagePlus size={19} /> Productos</button>
+        </nav>
+      </div>}
       <header className="topbar">
+        <button className="mobile-menu-button" type="button" onClick={() => setMobileNavOpen(true)} aria-label="Abrir menú"><Menu size={22} /></button>
         <div className="brand-wrap">
           <div className="brand-icon"><Store size={24} strokeWidth={2.6} /></div>
           <div><div className="brand-name">LOS OSMAN</div><div className="brand-subtitle">Punto de venta</div></div>
@@ -353,9 +376,10 @@ export default function App() {
         <button className="quick-camera-button" type="button" onClick={() => openCamera('sale')} aria-label="Escanear un producto" title="Escanear un producto"><Camera size={18} /><span>Escanear</span></button>
       </header>
 
-      <main className="layout">
+      {!productsOpen && <main className="layout">
         <section className="catalog-column" aria-label="Productos">
           <div className="scanner-card">
+            <div className="product-entry-actions"><button type="button" className="add-product-primary" onClick={() => { resetProductForm(); setProductsOpen(true); }}><PackagePlus size={17} /> Agregar producto</button></div>
             <div className="camera-entry-row"><span>También podés usar la cámara del celular.</span><button className="camera-scan-button" type="button" onClick={() => openCamera('sale')}><Camera size={17} /> Escanear con cámara</button></div>
             <label className="scanner-label" htmlFor="scanner-input"><Barcode size={18} /> BUSCAR O ESCANEAR</label>
             <div className="scanner-control">
@@ -386,7 +410,9 @@ export default function App() {
           </div> : <div className="empty-search"><Search size={24} /><strong>No encontramos productos</strong><span>Probá con otro nombre o verificá el código.</span></div>}
         </section>
 
-        <aside className="cart-panel" aria-label="Cuenta actual">
+        {cart.length > 0 && <button className="mobile-cart-access" type="button" onClick={() => setCartOpen(true)}><ShoppingBasket size={20} /><span><strong>Ver cuenta · {itemCount}</strong><small>{money(total)}</small></span><ChevronDown size={18} /></button>}
+        <aside className={`cart-panel ${cartOpen ? 'is-open' : ''}`} aria-label="Cuenta actual">
+          {cartOpen && <button className="cart-close-button" type="button" onClick={() => setCartOpen(false)} aria-label="Cerrar cuenta"><X size={20} /></button>}
           <div className="cart-heading"><div className="cart-icon"><ShoppingBasket size={21} /></div><div><h2>Cuenta actual</h2><p>{itemCount ? `${itemCount} ${itemCount === 1 ? 'producto' : 'productos'}` : 'Lista para empezar'}</p></div><span className="cart-count">{itemCount}</span></div>
           <div className="cart-list" aria-live="polite">
             {cart.length ? cart.map((item) => <div className="cart-row" key={item.productId}>
@@ -406,12 +432,12 @@ export default function App() {
             <button className="cancel-sale" type="button" onClick={clearCart} disabled={!cart.length}><X size={16} /> Cancelar venta</button>
           </div>
         </aside>
-      </main>
+      </main>}
 
       {toast && <div className={`toast ${toast.startsWith('Producto no encontrado') ? 'toast-error' : ''}`} role="status"><span className="toast-symbol">{toast.startsWith('Producto no encontrado') ? <CircleHelp size={17} /> : <Check size={17} />}</span><span>{toast}</span>{pendingBarcode && <button className="toast-action" type="button" onClick={() => { setProductForm({ name: '', barcode: pendingBarcode, detail: '', price: '', category: 'Otros' }); setEditingProduct(''); setProductsOpen(true); setToast(''); setPendingBarcode(''); }}>Cargar producto</button>}</div>}
 
-      {productsOpen && <div className="modal-backdrop product-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setProductsOpen(false); resetProductForm(); focusScanner(); } }}>
-        <section className="products-modal" role="dialog" aria-modal="true" aria-labelledby="products-title">
+      {productsOpen && <main className="products-page">
+        <section className="products-modal" aria-labelledby="products-title">
           <div className="modal-heading"><div><h2 id="products-title">Administrar productos</h2><p>Agregá artículos al catálogo o actualizá sus datos.</p></div><button className="modal-close" type="button" onClick={() => { setProductsOpen(false); resetProductForm(); focusScanner(); }} aria-label="Cerrar"><X size={20} /></button></div>
           {!connected && <div className="catalog-warning">MongoDB no está conectado. Los cambios requieren conexión y no se guardarán en modo de prueba.</div>}
           <form className="product-form" onSubmit={submitProduct}>
@@ -426,7 +452,7 @@ export default function App() {
             {products.length ? products.map((product) => <div className="admin-product-row" key={product._id}><div><strong>{product.name}</strong><span>{product.barcode || 'Sin código'} · {product.category || 'Otros'} · {money(product.price)}</span></div><button type="button" disabled={!connected} onClick={() => startEditing(product)} aria-label={`Editar ${product.name}`}><Pencil size={16} /></button><button className="admin-delete" type="button" disabled={!connected} onClick={() => archiveProduct(product)} aria-label={`Quitar ${product.name}`}><Trash2 size={16} /></button></div>) : <p className="admin-empty">Todavía no hay productos guardados.</p>}
           </div>
         </section>
-      </div>}
+      </main>}
 
       {paymentOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closePayment(); }}>
         <section className="payment-modal" role="dialog" aria-modal="true" aria-labelledby="payment-title">
