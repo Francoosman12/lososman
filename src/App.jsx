@@ -106,6 +106,9 @@ function CameraScanner({ onScan, onClose, closeAfterScan = false }) {
 export default function App() {
   const scannerRef = useRef(null);
   const productBarcodeRef = useRef(null);
+  const productFormRef = useRef(null);
+  const productNameRef = useRef(null);
+  const productCatalogSearchRef = useRef(null);
   const [products, setProducts] = useState(demoProducts);
   const [connected, setConnected] = useState(false);
   const [query, setQuery] = useState('');
@@ -117,6 +120,10 @@ export default function App() {
   const [paid, setPaid] = useState('');
   const [busy, setBusy] = useState(false);
   const [productsOpen, setProductsOpen] = useState(false);
+  const [productModalOpen, setProductModalOpen] = useState(false);
+  const [productAdminTab, setProductAdminTab] = useState('catalog');
+  const [productCatalogQuery, setProductCatalogQuery] = useState('');
+  const [productCatalogCategory, setProductCatalogCategory] = useState('Todas');
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraMode, setCameraMode] = useState('sale');
   const [cartOpen, setCartOpen] = useState(false);
@@ -137,10 +144,26 @@ export default function App() {
     const matchQuery = !normalizedQuery || `${product.name} ${product.barcode} ${product.category}`.toLocaleLowerCase('es-AR').includes(normalizedQuery);
     return matchCategory && matchQuery;
   }), [products, category, normalizedQuery]);
+  const filteredAdminProducts = useMemo(() => {
+    const search = productCatalogQuery.trim().toLocaleLowerCase('es-AR');
+    return products.filter((product) => {
+      const matchesSearch = !search || `${product.name} ${product.barcode || ''}`.toLocaleLowerCase('es-AR').includes(search);
+      return matchesSearch && (productCatalogCategory === 'Todas' || product.category === productCatalogCategory);
+    }).sort((a, b) => a.name.localeCompare(b.name, 'es-AR'));
+  }, [products, productCatalogQuery, productCatalogCategory]);
 
   useEffect(() => {
     if (!cart.length) setCartOpen(false);
   }, [cart.length]);
+
+  useEffect(() => {
+    if (!productsOpen) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      if (productAdminTab === 'catalog') productCatalogSearchRef.current?.focus({ preventScroll: true });
+      else if (!editingProduct) productNameRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [productsOpen, productAdminTab, editingProduct]);
 
   const focusScanner = useCallback(() => {
     window.requestAnimationFrame(() => scannerRef.current?.focus({ preventScroll: true }));
@@ -192,6 +215,12 @@ export default function App() {
       setProductForm((current) => ({ ...current, barcode: normalizedBarcode(barcode) }));
       return `Código capturado: ${normalizedBarcode(barcode)}`;
     }
+    if (cameraMode === 'catalog') {
+      const scanned = normalizedBarcode(barcode);
+      setProductCatalogQuery(scanned);
+      const match = products.find((item) => normalizedBarcode(item.barcode) === scanned);
+      return match ? `Producto encontrado: ${match.name}` : 'Código capturado. No hay un producto con ese EAN.';
+    }
     const product = products.find((item) => normalizedBarcode(item.barcode) === normalizedBarcode(barcode));
     if (!product) {
       setToast('Producto no encontrado. Buscá el producto o verificá su código');
@@ -208,6 +237,7 @@ export default function App() {
     setCameraOpen(false);
     window.requestAnimationFrame(() => {
       if (cameraMode === 'product') productBarcodeRef.current?.focus({ preventScroll: true });
+      else if (cameraMode === 'catalog') productCatalogSearchRef.current?.focus({ preventScroll: true });
       else if (!recentProductId) scannerRef.current?.focus({ preventScroll: true });
     });
   };
@@ -322,8 +352,11 @@ export default function App() {
       });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.message || 'No se pudo guardar el producto.');
-      setProducts((current) => editingProduct ? current.map((item) => item._id === editingProduct ? result : item) : [...current, result]);
+      setProducts((current) => editingProduct ? current.map((item) => String(item._id) === String(editingProduct) ? result : item) : [...current, result]);
+      if (editingProduct) setCart((current) => current.map((item) => String(item.productId) === String(editingProduct) ? { ...item, name: result.name, price: result.price } : item));
       resetProductForm();
+      setProductModalOpen(false);
+      setProductAdminTab('catalog');
       setToast(editingProduct ? 'Producto actualizado' : 'Producto guardado');
       setPendingBarcode('');
     } catch (error) { setToast(error.message || 'No se pudo guardar el producto.'); }
@@ -331,21 +364,39 @@ export default function App() {
   };
 
   const startEditing = (product) => {
+    setProductAdminTab('add');
     setEditingProduct(product._id);
     setProductForm({ name: product.name, barcode: product.barcode || '', detail: product.detail || '', price: String(product.price), category: product.category || 'Otros' });
+    window.setTimeout(() => {
+      productFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      productNameRef.current?.focus({ preventScroll: true });
+    }, 60);
   };
 
   const archiveProduct = async (product) => {
-    if (!window.confirm(`¿Quitar “${product.name}” del catálogo? Las ventas anteriores se conservan.`)) return;
+    if (!window.confirm(`¿Eliminar “${product.name}” del catálogo? Las ventas anteriores se conservan.`)) return;
     try {
       const response = await fetch(`/api/products/${product._id}`, { method: 'DELETE' });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.message || 'No se pudo quitar el producto.');
       setProducts((current) => current.filter((item) => item._id !== product._id));
-      setToast('Producto quitado del catálogo');
-      if (editingProduct === product._id) resetProductForm();
+      setCart((current) => current.filter((item) => String(item.productId) !== String(product._id)));
+      setToast('Producto eliminado del catálogo');
+      if (String(editingProduct) === String(product._id)) resetProductForm();
     } catch (error) { setToast(error.message || 'No se pudo quitar el producto.'); }
   };
+
+  const productFormContent = <>
+    <form className="product-form" ref={productFormRef} onSubmit={submitProduct}>
+      <label>Nombre *<input ref={productNameRef} required maxLength="120" value={productForm.name} onChange={(event) => setProductForm({ ...productForm, name: event.target.value })} placeholder="Ej.: Yerba 1 kg" /></label>
+      <label>Código de barras / EAN<div className="barcode-input-row"><input ref={productBarcodeRef} maxLength="80" value={productForm.barcode} onChange={(event) => setProductForm({ ...productForm, barcode: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }} placeholder="Escaneá o escribí el EAN" autoComplete="off" /><button className="barcode-camera-button" type="button" onClick={() => openCamera('product')} aria-label="Leer código de barras con la cámara"><Camera size={18} /><span>Cámara</span></button></div></label>
+      <label>Precio *<input required type="number" min="0" step="0.01" value={productForm.price} onChange={(event) => setProductForm({ ...productForm, price: event.target.value })} placeholder="0" /></label>
+      <label>Categoría<select required value={productForm.category} onChange={(event) => setProductForm({ ...productForm, category: event.target.value })}>{!businessCategories.includes(productForm.category) && productForm.category && <option value={productForm.category}>{productForm.category}</option>}{businessCategories.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+      <label className="product-detail-field">Detalle<input maxLength="240" value={productForm.detail} onChange={(event) => setProductForm({ ...productForm, detail: event.target.value })} placeholder="Presentación, marca, tamaño…" /></label>
+      <div className="product-form-actions"><button className="confirm-payment" type="submit" disabled={savingProduct || !connected}><Check size={18} />{savingProduct ? 'Guardando…' : editingProduct ? 'Guardar cambios' : 'Agregar producto'}</button>{editingProduct && <button className="back-to-sale" type="button" onClick={resetProductForm}>Cancelar edición</button>}</div>
+    </form>
+    {!productModalOpen && <button className="back-to-sale product-form-back" type="button" onClick={() => { resetProductForm(); setProductAdminTab('catalog'); }}>Volver al catálogo</button>}
+  </>;
 
   return (
     <div className="app-shell">
@@ -354,7 +405,7 @@ export default function App() {
         <div className="sidebar-brand"><div className="brand-icon"><Store size={23} /></div><div><strong>LOS OSMAN</strong><span>Punto de venta</span></div></div>
         <nav className="sidebar-nav">
           <button type="button" className={!productsOpen ? 'active' : ''} onClick={() => setProductsOpen(false)}><ShoppingBasket size={19} /> Punto de venta</button>
-          <button type="button" className={productsOpen ? 'active' : ''} onClick={() => setProductsOpen(true)}><PackagePlus size={19} /> Productos</button>
+          <button type="button" className={productsOpen ? 'active' : ''} onClick={() => { setProductAdminTab('catalog'); setProductsOpen(true); }}><PackagePlus size={19} /> Productos</button>
         </nav>
         <div className={`sidebar-connection ${connected ? 'is-live' : ''}`}><span />{connected ? 'Sistema conectado' : 'Modo de prueba'}</div>
       </aside>
@@ -362,7 +413,7 @@ export default function App() {
         <nav className="mobile-nav-drawer" aria-label="Navegación principal">
           <div className="mobile-drawer-heading"><div className="brand-icon"><Store size={22} /></div><strong>LOS OSMAN</strong><button type="button" onClick={() => setMobileNavOpen(false)} aria-label="Cerrar menú"><X size={20} /></button></div>
           <button type="button" className={!productsOpen ? 'active' : ''} onClick={() => { setProductsOpen(false); setMobileNavOpen(false); }}><ShoppingBasket size={19} /> Punto de venta</button>
-          <button type="button" className={productsOpen ? 'active' : ''} onClick={() => { setProductsOpen(true); setMobileNavOpen(false); }}><PackagePlus size={19} /> Productos</button>
+          <button type="button" className={productsOpen ? 'active' : ''} onClick={() => { setProductAdminTab('catalog'); setProductsOpen(true); setMobileNavOpen(false); }}><PackagePlus size={19} /> Productos</button>
         </nav>
       </div>}
       <header className="topbar">
@@ -372,14 +423,13 @@ export default function App() {
           <div><div className="brand-name">LOS OSMAN</div><div className="brand-subtitle">Punto de venta</div></div>
           <span className={`connection-pill ${connected ? 'is-live' : ''}`}><span />{connected ? 'Sistema conectado' : 'Modo de prueba'}</span>
         </div>
-        <div className="topbar-actions"><button className="manage-button" type="button" onClick={() => setProductsOpen(true)}><PackagePlus size={17} /> Productos</button><button className="help-button" type="button" onClick={() => setToast('Escaneá un producto o buscá por nombre. Luego tocá Cobrar.') }><CircleHelp size={19} /> Ayuda</button></div>
-        <button className="quick-camera-button" type="button" onClick={() => openCamera('sale')} aria-label="Escanear un producto" title="Escanear un producto"><Camera size={18} /><span>Escanear</span></button>
+        <div className="topbar-actions"><button className="manage-button" type="button" onClick={() => { setProductAdminTab('catalog'); setProductsOpen(true); }}><PackagePlus size={17} /> Productos</button><button className="help-button" type="button" onClick={() => setToast('Escaneá un producto o buscá por nombre. Luego tocá Cobrar.') }><CircleHelp size={19} /> Ayuda</button></div>
       </header>
 
       {!productsOpen && <main className="layout">
         <section className="catalog-column" aria-label="Productos">
           <div className="scanner-card">
-            <div className="product-entry-actions"><button type="button" className="add-product-primary" onClick={() => { resetProductForm(); setProductsOpen(true); }}><PackagePlus size={17} /> Agregar producto</button></div>
+            <div className="product-entry-actions"><button type="button" className="add-product-primary" onClick={() => { resetProductForm(); setProductModalOpen(true); }}><PackagePlus size={17} /> Agregar producto</button></div>
             <div className="camera-entry-row"><span>También podés usar la cámara del celular.</span><button className="camera-scan-button" type="button" onClick={() => openCamera('sale')}><Camera size={17} /> Escanear con cámara</button></div>
             <label className="scanner-label" htmlFor="scanner-input"><Barcode size={18} /> BUSCAR O ESCANEAR</label>
             <div className="scanner-control">
@@ -434,25 +484,37 @@ export default function App() {
         </aside>
       </main>}
 
-      {toast && <div className={`toast ${toast.startsWith('Producto no encontrado') ? 'toast-error' : ''}`} role="status"><span className="toast-symbol">{toast.startsWith('Producto no encontrado') ? <CircleHelp size={17} /> : <Check size={17} />}</span><span>{toast}</span>{pendingBarcode && <button className="toast-action" type="button" onClick={() => { setProductForm({ name: '', barcode: pendingBarcode, detail: '', price: '', category: 'Otros' }); setEditingProduct(''); setProductsOpen(true); setToast(''); setPendingBarcode(''); }}>Cargar producto</button>}</div>}
+      {toast && <div className={`toast ${toast.startsWith('Producto no encontrado') ? 'toast-error' : ''}`} role="status"><span className="toast-symbol">{toast.startsWith('Producto no encontrado') ? <CircleHelp size={17} /> : <Check size={17} />}</span><span>{toast}</span>{pendingBarcode && <button className="toast-action" type="button" onClick={() => { setProductForm({ name: '', barcode: pendingBarcode, detail: '', price: '', category: 'Otros' }); setEditingProduct(''); setProductModalOpen(true); setToast(''); setPendingBarcode(''); }}>Cargar producto</button>}</div>}
 
       {productsOpen && <main className="products-page">
         <section className="products-modal" aria-labelledby="products-title">
-          <div className="modal-heading"><div><h2 id="products-title">Administrar productos</h2><p>Agregá artículos al catálogo o actualizá sus datos.</p></div><button className="modal-close" type="button" onClick={() => { setProductsOpen(false); resetProductForm(); focusScanner(); }} aria-label="Cerrar"><X size={20} /></button></div>
+          <div className="modal-heading"><div><h2 id="products-title">Productos</h2><p>Administrá el catálogo o agregá un producto.</p></div><button className="modal-close" type="button" onClick={() => { setProductsOpen(false); resetProductForm(); focusScanner(); }} aria-label="Cerrar"><X size={20} /></button></div>
           {!connected && <div className="catalog-warning">MongoDB no está conectado. Los cambios requieren conexión y no se guardarán en modo de prueba.</div>}
-          <form className="product-form" onSubmit={submitProduct}>
-            <label>Nombre *<input required maxLength="120" value={productForm.name} onChange={(event) => setProductForm({ ...productForm, name: event.target.value })} placeholder="Ej.: Yerba 1 kg" /></label>
-            <label>Código de barras<div className="barcode-input-row"><input ref={productBarcodeRef} maxLength="80" value={productForm.barcode} onChange={(event) => setProductForm({ ...productForm, barcode: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }} placeholder="Escaneá el código acá" autoComplete="off" /><button className="barcode-camera-button" type="button" onClick={() => openCamera('product')} aria-label="Leer código de barras con la cámara"><Camera size={18} /><span>Cámara</span></button></div></label>
-            <label>Precio *<input required type="number" min="0" step="0.01" value={productForm.price} onChange={(event) => setProductForm({ ...productForm, price: event.target.value })} placeholder="0" /></label>
-            <label>Categoría<select required value={productForm.category} onChange={(event) => setProductForm({ ...productForm, category: event.target.value })}>{!businessCategories.includes(productForm.category) && productForm.category && <option value={productForm.category}>{productForm.category}</option>}{businessCategories.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-            <label className="product-detail-field">Detalle<input maxLength="240" value={productForm.detail} onChange={(event) => setProductForm({ ...productForm, detail: event.target.value })} placeholder="Presentación, marca, tamaño…" /></label>
-            <div className="product-form-actions"><button className="confirm-payment" type="submit" disabled={savingProduct || !connected}><Check size={18} />{savingProduct ? 'Guardando…' : editingProduct ? 'Guardar cambios' : 'Agregar producto'}</button>{editingProduct && <button className="back-to-sale" type="button" onClick={resetProductForm}>Cancelar edición</button>}</div>
-          </form>
-          <div className="product-admin-list"><div className="admin-list-heading"><strong>Catálogo ({products.length})</strong><span>El código de barras debe ser único.</span></div>
-            {products.length ? products.map((product) => <div className="admin-product-row" key={product._id}><div><strong>{product.name}</strong><span>{product.barcode || 'Sin código'} · {product.category || 'Otros'} · {money(product.price)}</span></div><button type="button" disabled={!connected} onClick={() => startEditing(product)} aria-label={`Editar ${product.name}`}><Pencil size={16} /></button><button className="admin-delete" type="button" disabled={!connected} onClick={() => archiveProduct(product)} aria-label={`Quitar ${product.name}`}><Trash2 size={16} /></button></div>) : <p className="admin-empty">Todavía no hay productos guardados.</p>}
+          <div className="product-admin-tabs" role="tablist" aria-label="Sección de productos">
+            <button type="button" role="tab" aria-selected={productAdminTab === 'catalog'} className={productAdminTab === 'catalog' ? 'active' : ''} onClick={() => { setProductAdminTab('catalog'); resetProductForm(); }}>Catálogo</button>
+            <button type="button" role="tab" aria-selected={productAdminTab === 'add'} className={productAdminTab === 'add' ? 'active' : ''} onClick={() => { resetProductForm(); setProductAdminTab('add'); }}>Agregar producto</button>
           </div>
+          {productAdminTab === 'add' ? <div className="product-add-section"><h3>{editingProduct ? 'Editar producto' : 'Nuevo producto'}</h3><p>Completá los datos para guardarlo en el catálogo.</p>{productFormContent}</div> : <div className="product-admin-list">
+            <div className="catalog-toolbar"><label className="catalog-search"><Search size={19} /><input ref={productCatalogSearchRef} value={productCatalogQuery} onChange={(event) => setProductCatalogQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }} placeholder="Buscar por nombre o código EAN" aria-label="Buscar productos por nombre o EAN" /><button type="button" className="catalog-camera-button" onClick={() => openCamera('catalog')} aria-label="Escanear EAN con la cámara" title="Escanear EAN con la cámara"><Camera size={18} /></button></label>
+              <select value={productCatalogCategory} onChange={(event) => setProductCatalogCategory(event.target.value)} aria-label="Filtrar por categoría"><option value="Todas">Todas las categorías</option>{categories.filter((item) => item !== 'Todos').map((item) => <option key={item} value={item}>{item}</option>)}</select>
+              <button type="button" className="catalog-add-button" onClick={() => { resetProductForm(); setProductAdminTab('add'); }}><Plus size={17} /> Agregar producto</button>
+            </div>
+            <div className="catalog-table-wrap"><table className="catalog-table"><thead><tr><th>Producto</th><th>Código EAN</th><th>Categoría</th><th>Precio</th><th>Acciones</th></tr></thead><tbody>
+              {filteredAdminProducts.map((product) => <tr key={product._id}><td data-label="Producto"><strong>{product.name}</strong>{product.detail && <small>{product.detail}</small>}</td><td data-label="Código EAN">{product.barcode || '—'}</td><td data-label="Categoría">{product.category || 'Otros'}</td><td data-label="Precio">{money(product.price)}</td><td data-label="Acciones"><div className="catalog-actions"><button type="button" disabled={!connected} onClick={() => startEditing(product)} aria-label={`Editar ${product.name}`} title="Editar producto"><Pencil size={16} /></button><button className="admin-delete" type="button" disabled={!connected} onClick={() => archiveProduct(product)} aria-label={`Eliminar ${product.name}`} title="Eliminar producto"><Trash2 size={16} /></button></div></td></tr>)}
+              {!filteredAdminProducts.length && <tr><td className="catalog-empty" colSpan="5">No hay productos que coincidan con la búsqueda.</td></tr>}
+            </tbody></table></div>
+            <div className="catalog-count">Mostrando {filteredAdminProducts.length} de {products.length} productos</div>
+          </div>}
         </section>
       </main>}
+
+      {productModalOpen && <div className="modal-backdrop product-entry-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingProduct) { setProductModalOpen(false); resetProductForm(); } }}>
+        <section className="products-modal product-entry-modal" role="dialog" aria-modal="true" aria-labelledby="product-entry-title">
+          <div className="modal-heading"><div><h2 id="product-entry-title">Agregar producto</h2><p>Completá los datos para incorporarlo al catálogo.</p></div><button className="modal-close" type="button" onClick={() => { setProductModalOpen(false); resetProductForm(); }} aria-label="Cerrar"><X size={20} /></button></div>
+          {!connected && <div className="catalog-warning">MongoDB no está conectado. Los cambios requieren conexión para guardarse.</div>}
+          {productFormContent}
+        </section>
+      </div>}
 
       {paymentOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closePayment(); }}>
         <section className="payment-modal" role="dialog" aria-modal="true" aria-labelledby="payment-title">
