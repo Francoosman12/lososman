@@ -186,9 +186,9 @@
   .sidebar-connection{display:flex;align-items:center;gap:8px;margin-top:auto;padding:11px 10px;border:1px solid #ffffff16;border-radius:8px;color:#c0cbd8;font-size:10px;font-weight:700}
   .sidebar-connection>span{width:7px;height:7px;border-radius:50%;background:#96a2b1}
   .sidebar-connection.is-live>span{background:#18a35b}
-  .topbar,.layout,.products-page{grid-column:2}
+  .topbar,.layout,.products-page,.labels-page{grid-column:2}
   .topbar{grid-row:1;width:100%}
-  .layout,.products-page{grid-row:2}
+  .layout,.products-page,.labels-page{grid-row:2}
 }
 
 @media(max-width:900px){

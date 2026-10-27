@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BadgeCheck, Barcode, Banknote, Camera, Check, ChevronDown, CircleHelp, CreditCard,
-  Menu, Minus, PackagePlus, Pencil, Plus, QrCode, Search, ShoppingBasket, Store, Trash2, X,
+  Menu, Minus, PackagePlus, Pencil, Plus, QrCode, Search, ShoppingBasket, Store, Tag, Trash2, X,
 } from 'lucide-react';
+
+import Labels from './Labels.jsx';
 
 const demoProducts = [
   { _id: 'p1', name: 'Coca-Cola 2.25 L', detail: 'Botella grande', barcode: '7790895000993', price: 3400, category: 'Bebidas' },
@@ -120,6 +122,7 @@ export default function App() {
   const [paid, setPaid] = useState('');
   const [busy, setBusy] = useState(false);
   const [productsOpen, setProductsOpen] = useState(false);
+  const [labelsOpen, setLabelsOpen] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [productAdminTab, setProductAdminTab] = useState('catalog');
   const [productCatalogQuery, setProductCatalogQuery] = useState('');
@@ -404,8 +407,9 @@ export default function App() {
       <aside className="desktop-sidebar" aria-label="Navegación principal">
         <div className="sidebar-brand"><div className="brand-icon"><Store size={23} /></div><div><strong>LOS OSMAN</strong><span>Punto de venta</span></div></div>
         <nav className="sidebar-nav">
-          <button type="button" className={!productsOpen ? 'active' : ''} onClick={() => setProductsOpen(false)}><ShoppingBasket size={19} /> Punto de venta</button>
-          <button type="button" className={productsOpen ? 'active' : ''} onClick={() => { setProductAdminTab('catalog'); setProductsOpen(true); }}><PackagePlus size={19} /> Productos</button>
+          <button type="button" className={!productsOpen && !labelsOpen ? 'active' : ''} onClick={() => { setProductsOpen(false); setLabelsOpen(false); }}><ShoppingBasket size={19} /> Punto de venta</button>
+          <button type="button" className={productsOpen ? 'active' : ''} onClick={() => { setLabelsOpen(false); setProductAdminTab('catalog'); setProductsOpen(true); }}><PackagePlus size={19} /> Productos</button>
+          <button type="button" className={labelsOpen ? 'active' : ''} onClick={() => { setProductsOpen(false); setLabelsOpen(true); }}><Tag size={19} /> Etiquetas</button>
         </nav>
         <div className={`sidebar-connection ${connected ? 'is-live' : ''}`}><span />{connected ? 'Sistema conectado' : 'Modo de prueba'}</div>
       </aside>
@@ -413,7 +417,8 @@ export default function App() {
         <nav className="mobile-nav-drawer" aria-label="Navegación principal">
           <div className="mobile-drawer-heading"><div className="brand-icon"><Store size={22} /></div><strong>LOS OSMAN</strong><button type="button" onClick={() => setMobileNavOpen(false)} aria-label="Cerrar menú"><X size={20} /></button></div>
           <button type="button" className={!productsOpen ? 'active' : ''} onClick={() => { setProductsOpen(false); setMobileNavOpen(false); }}><ShoppingBasket size={19} /> Punto de venta</button>
-          <button type="button" className={productsOpen ? 'active' : ''} onClick={() => { setProductAdminTab('catalog'); setProductsOpen(true); setMobileNavOpen(false); }}><PackagePlus size={19} /> Productos</button>
+          <button type="button" className={productsOpen ? 'active' : ''} onClick={() => { setLabelsOpen(false); setProductAdminTab('catalog'); setProductsOpen(true); setMobileNavOpen(false); }}><PackagePlus size={19} /> Productos</button>
+          <button type="button" className={labelsOpen ? 'active' : ''} onClick={() => { setProductsOpen(false); setLabelsOpen(true); setMobileNavOpen(false); }}><Tag size={19} /> Etiquetas</button>
         </nav>
       </div>}
       <header className="topbar">
@@ -423,10 +428,10 @@ export default function App() {
           <div><div className="brand-name">LOS OSMAN</div><div className="brand-subtitle">Punto de venta</div></div>
           <span className={`connection-pill ${connected ? 'is-live' : ''}`}><span />{connected ? 'Sistema conectado' : 'Modo de prueba'}</span>
         </div>
-        <div className="topbar-actions"><button className="manage-button" type="button" onClick={() => { setProductAdminTab('catalog'); setProductsOpen(true); }}><PackagePlus size={17} /> Productos</button><button className="help-button" type="button" onClick={() => setToast('Escaneá un producto o buscá por nombre. Luego tocá Cobrar.') }><CircleHelp size={19} /> Ayuda</button></div>
+        <div className="topbar-actions"><button className="manage-button" type="button" onClick={() => { setLabelsOpen(false); setProductAdminTab('catalog'); setProductsOpen(true); }}><PackagePlus size={17} /> Productos</button><button className="help-button" type="button" onClick={() => setToast('Escaneá un producto o buscá por nombre. Luego tocá Cobrar.') }><CircleHelp size={19} /> Ayuda</button></div>
       </header>
 
-      {!productsOpen && <main className="layout">
+      {!productsOpen && !labelsOpen && <main className="layout">
         <section className="catalog-column" aria-label="Productos">
           <div className="scanner-card">
             <div className="product-entry-actions"><button type="button" className="add-product-primary" onClick={() => { resetProductForm(); setProductModalOpen(true); }}><PackagePlus size={17} /> Agregar producto</button></div>
@@ -485,6 +490,8 @@ export default function App() {
       </main>}
 
       {toast && <div className={`toast ${toast.startsWith('Producto no encontrado') ? 'toast-error' : ''}`} role="status"><span className="toast-symbol">{toast.startsWith('Producto no encontrado') ? <CircleHelp size={17} /> : <Check size={17} />}</span><span>{toast}</span>{pendingBarcode && <button className="toast-action" type="button" onClick={() => { setProductForm({ name: '', barcode: pendingBarcode, detail: '', price: '', category: 'Otros' }); setEditingProduct(''); setProductModalOpen(true); setToast(''); setPendingBarcode(''); }}>Cargar producto</button>}</div>}
+
+      {labelsOpen && <Labels products={products} />}
 
       {productsOpen && <main className="products-page">
         <section className="products-modal" aria-labelledby="products-title">
