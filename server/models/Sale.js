@@ -10,6 +10,7 @@ const saleSchema = new mongoose.Schema({
   total: { type: Number, required: true, min: 0 },
   paymentMethod: { type: String, enum: ['Efectivo', 'Mercado Pago / QR', 'Débito', 'Crédito'], required: true },
   paid: { type: Number, required: true, min: 0 },
+  stockOverride: { type: Boolean, default: false },
 }, { timestamps: true });
 
 export default mongoose.model('Sale', saleSchema);

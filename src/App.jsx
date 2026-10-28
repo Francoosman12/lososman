@@ -118,12 +118,17 @@ export default function App() {
   const [cart, setCart] = useState([]);
   const [toast, setToast] = useState('');
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [stockWarningOpen, setStockWarningOpen] = useState(false);
+  const [allowNegativeStock, setAllowNegativeStock] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('Efectivo');
   const [paid, setPaid] = useState('');
   const [busy, setBusy] = useState(false);
   const [productsOpen, setProductsOpen] = useState(false);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [productModalOpen, setProductModalOpen] = useState(false);
+  const [stockReceiptProduct, setStockReceiptProduct] = useState(null);
+  const [stockReceiptQuantity, setStockReceiptQuantity] = useState('');
+  const [savingStock, setSavingStock] = useState(false);
   const [productAdminTab, setProductAdminTab] = useState('catalog');
   const [productCatalogQuery, setProductCatalogQuery] = useState('');
   const [productCatalogCategory, setProductCatalogCategory] = useState('Todas');
@@ -133,7 +138,7 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [recentProductId, setRecentProductId] = useState('');
   const productCardRefs = useRef(new Map());
-  const [productForm, setProductForm] = useState({ name: '', barcode: '', detail: '', price: '', category: 'Otros' });
+  const [productForm, setProductForm] = useState({ name: '', barcode: '', detail: '', price: '', stock: '0', category: 'Otros' });
   const [editingProduct, setEditingProduct] = useState('');
   const [savingProduct, setSavingProduct] = useState(false);
   const [pendingBarcode, setPendingBarcode] = useState('');
@@ -154,6 +159,16 @@ export default function App() {
       return matchesSearch && (productCatalogCategory === 'Todas' || product.category === productCatalogCategory);
     }).sort((a, b) => a.name.localeCompare(b.name, 'es-AR'));
   }, [products, productCatalogQuery, productCatalogCategory]);
+  const trackedProducts = products.filter((product) => Number.isInteger(product.stock));
+  const stockUnitCount = trackedProducts.reduce((total, product) => total + Math.max(0, product.stock), 0);
+  const lowStockCount = trackedProducts.filter((product) => product.stock >= 0 && product.stock <= 5).length;
+  const untrackedStockCount = products.length - trackedProducts.length;
+  const stockDeficitCount = trackedProducts.reduce((total, product) => total + Math.max(0, -product.stock), 0);
+  const stockShortages = useMemo(() => cart.flatMap((item) => {
+    const product = products.find((entry) => String(entry._id) === String(item.productId));
+    if (!Number.isInteger(product?.stock) || item.quantity <= product.stock) return [];
+    return [{ name: item.name, available: product.stock, quantity: item.quantity, deficit: item.quantity - product.stock }];
+  }), [cart, products]);
 
   useEffect(() => {
     if (!cart.length) setCartOpen(false);
@@ -201,9 +216,17 @@ export default function App() {
   }, [cameraOpen, recentProductId]);
 
   const addProduct = useCallback((product, { refocus = true } = {}) => {
-    const wasInCart = cart.some((row) => row.productId === product._id);
+    const productId = String(product._id);
+    const cartItem = cart.find((row) => String(row.productId) === productId);
+    if (false && Number.isInteger(product.stock) && (cartItem?.quantity || 0) >= product.stock) {
+      setToast(product.stock === 0 ? 'Producto sin stock. Ingresá mercadería para venderlo.' : `Stock insuficiente. Disponible: ${product.stock}.`);
+      setQuery('');
+      if (refocus) focusScanner();
+      return;
+    }
+    const wasInCart = Boolean(cartItem);
     setCart((current) => {
-      if (current.some((row) => row.productId === product._id)) return current.map((row) => row.productId === product._id ? { ...row, quantity: row.quantity + 1 } : row);
+      if (current.some((row) => String(row.productId) === productId)) return current.map((row) => String(row.productId) === productId ? { ...row, quantity: row.quantity + 1 } : row);
       return [...current, { productId: product._id, name: product.name, price: product.price, quantity: 1 }];
     });
     setToast(wasInCart ? 'Cantidad actualizada' : 'Producto agregado');
@@ -275,8 +298,15 @@ export default function App() {
   };
 
   const changeQuantity = (productId, amount) => {
+    const product = products.find((item) => String(item._id) === String(productId));
+    const cartItem = cart.find((item) => String(item.productId) === String(productId));
+    if (false && amount > 0 && Number.isInteger(product?.stock) && (cartItem?.quantity || 0) >= product.stock) {
+      setToast(`Stock insuficiente. Disponible: ${product.stock}.`);
+      focusScanner();
+      return;
+    }
     setCart((current) => current
-      .map((row) => row.productId === productId ? { ...row, quantity: Math.max(0, row.quantity + amount) } : row)
+      .map((row) => String(row.productId) === String(productId) ? { ...row, quantity: Math.max(0, row.quantity + amount) } : row)
       .filter((row) => row.quantity > 0));
     focusScanner();
   };
@@ -285,7 +315,12 @@ export default function App() {
     if (value === '') return;
     const amount = Number.parseInt(value, 10);
     if (!Number.isInteger(amount) || amount < 1) return;
-    setCart((current) => current.map((row) => row.productId === productId ? { ...row, quantity: amount } : row));
+    const product = products.find((item) => String(item._id) === String(productId));
+    if (false && Number.isInteger(product?.stock) && amount > product.stock) {
+      setToast(`Stock insuficiente. Disponible: ${product.stock}.`);
+      return;
+    }
+    setCart((current) => current.map((row) => String(row.productId) === String(productId) ? { ...row, quantity: amount } : row));
   };
 
   const removeProduct = (productId) => {
@@ -305,6 +340,15 @@ export default function App() {
   const openPayment = () => {
     if (!cart.length) return;
     setCartOpen(false);
+    setAllowNegativeStock(false);
+    if (stockShortages.length) {
+      setStockWarningOpen(true);
+      return;
+    }
+    launchPayment();
+  };
+
+  const launchPayment = () => {
     setPaymentMethod('Efectivo');
     setPaid(String(total));
     setPaymentOpen(true);
@@ -312,6 +356,7 @@ export default function App() {
 
   const closePayment = () => {
     setPaymentOpen(false);
+    setAllowNegativeStock(false);
     focusScanner();
   };
 
@@ -322,7 +367,7 @@ export default function App() {
     try {
       const response = await fetch('/api/sales', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items: cart, total, paymentMethod, paid: Number(paid) || total }),
+        body: JSON.stringify({ items: cart, total, paymentMethod, paid: Number(paid) || total, allowNegativeStock }),
       });
       const result = await response.json().catch(() => null);
       if (!response.ok) {
@@ -330,10 +375,18 @@ export default function App() {
         setBusy(false);
         return;
       }
+      if (Array.isArray(result?.stockUpdates)) {
+        setProducts((current) => current.map((product) => {
+          const update = result.stockUpdates.find((item) => String(item.productId) === String(product._id));
+          return update ? { ...product, stock: update.stock } : product;
+        }));
+      }
       saved = result?.persisted === true;
     } catch { /* Demo mode keeps the sale flow available without a running server. */ }
     setBusy(false);
     setPaymentOpen(false);
+    setStockWarningOpen(false);
+    setAllowNegativeStock(false);
     setCart([]);
     setQuery('');
     setToast(saved ? 'Venta completada' : 'Venta completada en modo de prueba (no guardada en MongoDB)');
@@ -342,7 +395,7 @@ export default function App() {
 
   const resetProductForm = () => {
     setEditingProduct('');
-    setProductForm({ name: '', barcode: '', detail: '', price: '', category: 'Otros' });
+    setProductForm({ name: '', barcode: '', detail: '', price: '', stock: '0', category: 'Otros' });
   };
 
   const submitProduct = async (event) => {
@@ -351,7 +404,7 @@ export default function App() {
     try {
       const response = await fetch(editingProduct ? `/api/products/${editingProduct}` : '/api/products', {
         method: editingProduct ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...productForm, price: Number(productForm.price), category: productForm.category || 'Otros' }),
+        body: JSON.stringify({ ...productForm, price: Number(productForm.price), stock: Number(productForm.stock), category: productForm.category || 'Otros' }),
       });
       const result = await response.json().catch(() => null);
       if (!response.ok) throw new Error(result?.message || 'No se pudo guardar el producto.');
@@ -366,10 +419,29 @@ export default function App() {
     finally { setSavingProduct(false); }
   };
 
+  const receiveStock = async (event) => {
+    event.preventDefault();
+    const quantity = Number(stockReceiptQuantity);
+    if (!stockReceiptProduct || !Number.isInteger(quantity) || quantity < 1) return;
+    setSavingStock(true);
+    try {
+      const response = await fetch(`/api/products/${stockReceiptProduct._id}/stock`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quantity }),
+      });
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(result?.message || 'No se pudo ingresar el stock.');
+      setProducts((current) => current.map((item) => String(item._id) === String(result._id) ? result : item));
+      setStockReceiptProduct(null);
+      setStockReceiptQuantity('');
+      setToast(`Stock actualizado: ${result.stock} unidades de ${result.name}.`);
+    } catch (error) { setToast(error.message || 'No se pudo ingresar el stock.'); }
+    finally { setSavingStock(false); }
+  };
+
   const startEditing = (product) => {
     setProductAdminTab('add');
     setEditingProduct(product._id);
-    setProductForm({ name: product.name, barcode: product.barcode || '', detail: product.detail || '', price: String(product.price), category: product.category || 'Otros' });
+    setProductForm({ name: product.name, barcode: product.barcode || '', detail: product.detail || '', price: String(product.price), stock: String(product.stock ?? 0), category: product.category || 'Otros' });
     window.setTimeout(() => {
       productFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       productNameRef.current?.focus({ preventScroll: true });
@@ -394,6 +466,7 @@ export default function App() {
       <label>Nombre *<input ref={productNameRef} required maxLength="120" value={productForm.name} onChange={(event) => setProductForm({ ...productForm, name: event.target.value })} placeholder="Ej.: Yerba 1 kg" /></label>
       <label>Código de barras / EAN<div className="barcode-input-row"><input ref={productBarcodeRef} maxLength="80" value={productForm.barcode} onChange={(event) => setProductForm({ ...productForm, barcode: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }} placeholder="Escaneá o escribí el EAN" autoComplete="off" /><button className="barcode-camera-button" type="button" onClick={() => openCamera('product')} aria-label="Leer código de barras con la cámara"><Camera size={18} /><span>Cámara</span></button></div></label>
       <label>Precio *<input required type="number" min="0" step="0.01" value={productForm.price} onChange={(event) => setProductForm({ ...productForm, price: event.target.value })} placeholder="0" /></label>
+      <label>{editingProduct ? 'Stock actual *' : 'Stock inicial *'}<input required type="number" min={editingProduct ? '-10000000' : '0'} max="10000000" step="1" inputMode="numeric" value={productForm.stock} onChange={(event) => setProductForm({ ...productForm, stock: event.target.value })} placeholder="0" /><small className="stock-field-help">Unidades disponibles para vender.</small></label>
       <label>Categoría<select required value={productForm.category} onChange={(event) => setProductForm({ ...productForm, category: event.target.value })}>{!businessCategories.includes(productForm.category) && productForm.category && <option value={productForm.category}>{productForm.category}</option>}{businessCategories.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
       <label className="product-detail-field">Detalle<input maxLength="240" value={productForm.detail} onChange={(event) => setProductForm({ ...productForm, detail: event.target.value })} placeholder="Presentación, marca, tamaño…" /></label>
       <div className="product-form-actions"><button className="confirm-payment" type="submit" disabled={savingProduct || !connected}><Check size={18} />{savingProduct ? 'Guardando…' : editingProduct ? 'Guardar cambios' : 'Agregar producto'}</button>{editingProduct && <button className="back-to-sale" type="button" onClick={resetProductForm}>Cancelar edición</button>}</div>
@@ -460,6 +533,7 @@ export default function App() {
               <div className="product-card-top"><span className="product-category">{product.category}</span><span className="add-icon"><Plus size={19} /></span></div>
               <span className="product-title">{product.name}</span>
               <span className="product-detail">{product.detail || `Código ${product.barcode || 'sin código'}`}</span>
+              <span className={`product-stock ${Number.isInteger(product.stock) && product.stock <= 5 ? 'product-stock-low' : ''}`}>{Number.isInteger(product.stock) ? product.stock < 0 ? `Faltante: ${Math.abs(product.stock)}` : `Stock: ${product.stock}` : 'Stock sin configurar'}</span>
               <span className="product-price">{money(product.price)}</span>
             </button>)}
           </div> : <div className="empty-search"><Search size={24} /><strong>No encontramos productos</strong><span>Probá con otro nombre o verificá el código.</span></div>}
@@ -489,7 +563,7 @@ export default function App() {
         </aside>
       </main>}
 
-      {toast && <div className={`toast ${toast.startsWith('Producto no encontrado') ? 'toast-error' : ''}`} role="status"><span className="toast-symbol">{toast.startsWith('Producto no encontrado') ? <CircleHelp size={17} /> : <Check size={17} />}</span><span>{toast}</span>{pendingBarcode && <button className="toast-action" type="button" onClick={() => { setProductForm({ name: '', barcode: pendingBarcode, detail: '', price: '', category: 'Otros' }); setEditingProduct(''); setProductModalOpen(true); setToast(''); setPendingBarcode(''); }}>Cargar producto</button>}</div>}
+      {toast && <div className={`toast ${toast.startsWith('Producto no encontrado') || toast.startsWith('Stock insuficiente') || toast.startsWith('Producto sin stock') ? 'toast-error' : ''}`} role="status"><span className="toast-symbol">{toast.startsWith('Producto no encontrado') || toast.startsWith('Stock insuficiente') || toast.startsWith('Producto sin stock') ? <CircleHelp size={17} /> : <Check size={17} />}</span><span>{toast}</span>{pendingBarcode && <button className="toast-action" type="button" onClick={() => { setProductForm({ name: '', barcode: pendingBarcode, detail: '', price: '', stock: '0', category: 'Otros' }); setEditingProduct(''); setProductModalOpen(true); setToast(''); setPendingBarcode(''); }}>Cargar producto</button>}</div>}
 
       {labelsOpen && <Labels products={products} />}
 
@@ -497,6 +571,14 @@ export default function App() {
         <section className="products-modal" aria-labelledby="products-title">
           <div className="modal-heading"><div><h2 id="products-title">Productos</h2><p>Administrá el catálogo o agregá un producto.</p></div><button className="modal-close" type="button" onClick={() => { setProductsOpen(false); resetProductForm(); focusScanner(); }} aria-label="Cerrar"><X size={20} /></button></div>
           {!connected && <div className="catalog-warning">MongoDB no está conectado. Los cambios requieren conexión y no se guardarán en modo de prueba.</div>}
+          <div className="product-overview" aria-label="Resumen del inventario">
+            <div><span>Productos cargados</span><strong>{products.length}</strong></div>
+            <div><span>Unidades en stock</span><strong>{stockUnitCount}</strong></div>
+            <div><span>Stock bajo (5 o menos)</span><strong>{lowStockCount}</strong></div>
+            <div><span>Unidades faltantes</span><strong>{stockDeficitCount}</strong></div>
+            <div><span>Sin configurar</span><strong>{untrackedStockCount}</strong></div>
+          </div>
+          {untrackedStockCount > 0 && <p className="stock-untracked-note">Los productos sin configurar siguen vendiéndose, pero sus ventas no descuentan stock hasta que cargues sus existencias.</p>}
           <div className="product-admin-tabs" role="tablist" aria-label="Sección de productos">
             <button type="button" role="tab" aria-selected={productAdminTab === 'catalog'} className={productAdminTab === 'catalog' ? 'active' : ''} onClick={() => { setProductAdminTab('catalog'); resetProductForm(); }}>Catálogo</button>
             <button type="button" role="tab" aria-selected={productAdminTab === 'add'} className={productAdminTab === 'add' ? 'active' : ''} onClick={() => { resetProductForm(); setProductAdminTab('add'); }}>Agregar producto</button>
@@ -506,11 +588,11 @@ export default function App() {
               <select value={productCatalogCategory} onChange={(event) => setProductCatalogCategory(event.target.value)} aria-label="Filtrar por categoría"><option value="Todas">Todas las categorías</option>{categories.filter((item) => item !== 'Todos').map((item) => <option key={item} value={item}>{item}</option>)}</select>
               <button type="button" className="catalog-add-button" onClick={() => { resetProductForm(); setProductAdminTab('add'); }}><Plus size={17} /> Agregar producto</button>
             </div>
-            <div className="catalog-table-wrap"><table className="catalog-table"><thead><tr><th>Producto</th><th>Código EAN</th><th>Categoría</th><th>Precio</th><th>Acciones</th></tr></thead><tbody>
-              {filteredAdminProducts.map((product) => <tr key={product._id}><td data-label="Producto"><strong>{product.name}</strong>{product.detail && <small>{product.detail}</small>}</td><td data-label="Código EAN">{product.barcode || '—'}</td><td data-label="Categoría">{product.category || 'Otros'}</td><td data-label="Precio">{money(product.price)}</td><td data-label="Acciones"><div className="catalog-actions"><button type="button" disabled={!connected} onClick={() => startEditing(product)} aria-label={`Editar ${product.name}`} title="Editar producto"><Pencil size={16} /></button><button className="admin-delete" type="button" disabled={!connected} onClick={() => archiveProduct(product)} aria-label={`Eliminar ${product.name}`} title="Eliminar producto"><Trash2 size={16} /></button></div></td></tr>)}
-              {!filteredAdminProducts.length && <tr><td className="catalog-empty" colSpan="5">No hay productos que coincidan con la búsqueda.</td></tr>}
+            <div className="catalog-table-wrap"><table className="catalog-table"><thead><tr><th>Producto</th><th>Código EAN</th><th>Categoría</th><th>Precio</th><th>Stock</th><th>Acciones</th></tr></thead><tbody>
+              {filteredAdminProducts.map((product) => <tr key={product._id}><td data-label="Producto"><strong>{product.name}</strong>{product.detail && <small>{product.detail}</small>}</td><td data-label="Código EAN">{product.barcode || '—'}</td><td data-label="Categoría">{product.category || 'Otros'}</td><td data-label="Precio">{money(product.price)}</td><td data-label="Stock"><span className={`stock-pill ${Number.isInteger(product.stock) && product.stock <= 5 ? 'stock-pill-low' : ''}`}>{Number.isInteger(product.stock) ? product.stock < 0 ? `Faltante: ${Math.abs(product.stock)}` : `${product.stock} un.` : 'Sin configurar'}</span></td><td data-label="Acciones"><div className="catalog-actions"><button type="button" className="stock-add-action" disabled={!connected} onClick={() => { setStockReceiptProduct(product); setStockReceiptQuantity(''); }} aria-label={`Ingresar mercadería para ${product.name}`} title="Ingresar mercadería"><PackagePlus size={16} /></button><button type="button" disabled={!connected} onClick={() => startEditing(product)} aria-label={`Editar ${product.name}`} title="Editar producto"><Pencil size={16} /></button><button className="admin-delete" type="button" disabled={!connected} onClick={() => archiveProduct(product)} aria-label={`Eliminar ${product.name}`} title="Eliminar producto"><Trash2 size={16} /></button></div></td></tr>)}
+              {!filteredAdminProducts.length && <tr><td className="catalog-empty" colSpan="6">No hay productos que coincidan con la búsqueda.</td></tr>}
             </tbody></table></div>
-            <div className="catalog-count">Mostrando {filteredAdminProducts.length} de {products.length} productos</div>
+            <div className="catalog-count">Mostrando {filteredAdminProducts.length} de {products.length} productos · {stockUnitCount} unidades registradas en stock</div>
           </div>}
         </section>
       </main>}
@@ -520,6 +602,30 @@ export default function App() {
           <div className="modal-heading"><div><h2 id="product-entry-title">Agregar producto</h2><p>Completá los datos para incorporarlo al catálogo.</p></div><button className="modal-close" type="button" onClick={() => { setProductModalOpen(false); resetProductForm(); }} aria-label="Cerrar"><X size={20} /></button></div>
           {!connected && <div className="catalog-warning">MongoDB no está conectado. Los cambios requieren conexión para guardarse.</div>}
           {productFormContent}
+        </section>
+      </div>}
+
+      {stockReceiptProduct && <div className="modal-backdrop product-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingStock) setStockReceiptProduct(null); }}>
+        <section className="stock-receipt-modal" role="dialog" aria-modal="true" aria-labelledby="stock-receipt-title">
+          <div className="modal-heading"><div><h2 id="stock-receipt-title">Ingresar mercadería</h2><p>{stockReceiptProduct.name}</p></div><button className="modal-close" type="button" onClick={() => setStockReceiptProduct(null)} aria-label="Cerrar"><X size={20} /></button></div>
+          <div className="stock-receipt-current">Stock actual <strong>{Number.isInteger(stockReceiptProduct.stock) ? stockReceiptProduct.stock < 0 ? `Faltante: ${Math.abs(stockReceiptProduct.stock)} unidades` : `${stockReceiptProduct.stock} unidades` : 'Sin configurar'}</strong></div>
+          <form className="stock-receipt-form" onSubmit={receiveStock}>
+            <label htmlFor="stock-receipt-quantity">Unidades recibidas</label>
+            <input id="stock-receipt-quantity" required type="number" min="1" max="10000000" step="1" inputMode="numeric" autoFocus value={stockReceiptQuantity} onChange={(event) => setStockReceiptQuantity(event.target.value)} placeholder="Ej.: 12" />
+            <p>La cantidad se suma al stock disponible del producto.</p>
+            <button className="confirm-payment" type="submit" disabled={savingStock || !connected}><PackagePlus size={18} />{savingStock ? 'Actualizando…' : 'Sumar al stock'}</button>
+            <button className="back-to-sale" type="button" onClick={() => setStockReceiptProduct(null)}>Cancelar</button>
+          </form>
+        </section>
+      </div>}
+
+      {stockWarningOpen && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setStockWarningOpen(false); }}>
+        <section className="payment-modal stock-override-modal" role="alertdialog" aria-modal="true" aria-labelledby="stock-warning-title" aria-describedby="stock-warning-description">
+          <div className="modal-heading"><div><h2 id="stock-warning-title">Venta sin stock suficiente</h2><p id="stock-warning-description">Podés continuar y registrar el faltante en el inventario.</p></div><button className="modal-close" type="button" onClick={() => setStockWarningOpen(false)} aria-label="Volver al carrito"><X size={20} /></button></div>
+          <ul className="stock-override-list">{stockShortages.map((item) => <li key={item.name}><strong>{item.name}</strong><span>Disponibles: {Math.max(0, item.available)} · A vender: {item.quantity} · Quedará faltante: {item.deficit}</span></li>)}</ul>
+          <p className="stock-override-note">Al confirmar, el stock quedará negativo hasta que ingreses mercadería.</p>
+          <button className="confirm-payment" type="button" onClick={() => { setStockWarningOpen(false); setAllowNegativeStock(true); launchPayment(); }}><BadgeCheck size={19} />Aceptar y continuar</button>
+          <button className="back-to-sale" type="button" onClick={() => setStockWarningOpen(false)}>Volver al carrito</button>
         </section>
       </div>}
 
