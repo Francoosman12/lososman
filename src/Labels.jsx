@@ -4,18 +4,18 @@ import './labels.css';
 
 const money = (amount) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(amount) || 0);
 
-export default function Labels({ products }) {
+export default function Labels({ products = [] }) {
   const searchRef = useRef(null);
   const [sectors, setSectors] = useState([{ id: 'sector-1', name: 'Sector 1', productIds: [] }]);
   const [activeSectorId, setActiveSectorId] = useState('sector-1');
   const [search, setSearch] = useState('');
   const activeSector = sectors.find((sector) => sector.id === activeSectorId) || sectors[0];
   const normalizedSearch = search.trim().toLocaleLowerCase('es-AR');
-  const filteredProducts = useMemo(() => products.filter((product) =>
+  const filteredProducts = useMemo(() => (Array.isArray(products) ? products : []).filter((product) =>
     !normalizedSearch || [product.name, product.barcode, product.detail, product.category].filter(Boolean).join(' ').toLocaleLowerCase('es-AR').includes(normalizedSearch)
-  ).sort((a, b) => a.name.localeCompare(b.name, 'es-AR')), [products, normalizedSearch]);
+  ).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es-AR')), [products, normalizedSearch]);
   const selectedCount = sectors.reduce((sum, sector) => sum + sector.productIds.length, 0);
-  const productById = new Map(products.map((product) => [String(product._id), product]));
+  const productById = new Map((Array.isArray(products) ? products : []).map((product) => [String(product._id), product]));
 
   useEffect(() => {
     if (window.matchMedia('(pointer: fine)').matches) searchRef.current?.focus({ preventScroll: true });
@@ -48,6 +48,13 @@ export default function Labels({ products }) {
     const bottom = 288;
     let column = 0;
     let y = 20;
+    let renderedRows = 0;
+    let rightColumnStarted = false;
+    const printableSectors = sectors.map((sector) => ({
+      sector,
+      products: sector.productIds.map((id) => productById.get(String(id))).filter(Boolean),
+    })).filter(({ products }) => products.length);
+    const balanceAt = Math.ceil(printableSectors.reduce((count, group) => count + group.products.length, 0) / 2);
     const columnX = () => margin + column * (columnWidth + gutter);
     const drawPageHeading = () => {
       pdf.setTextColor(0, 0, 0);
@@ -63,6 +70,7 @@ export default function Labels({ products }) {
     const nextColumn = () => {
       if (column === 0) {
         column = 1;
+        rightColumnStarted = true;
         y = 20;
       } else {
         pdf.addPage('a4', 'portrait');
@@ -84,19 +92,26 @@ export default function Labels({ products }) {
 
     pdf.setProperties({ title: 'Etiquetas de precios - LOS OSMAN', subject: 'Listas de precios por sector' });
     drawPageHeading();
-    sectors.filter((sector) => sector.productIds.length).forEach((sector) => {
+    printableSectors.forEach(({ sector, products }) => {
+      const currentDistance = Math.abs(renderedRows - balanceAt);
+      const distanceAfterSector = Math.abs(renderedRows + products.length - balanceAt);
+      const placeSectorInRightColumn = renderedRows > 0 && distanceAfterSector >= currentDistance;
+      if (!rightColumnStarted && column === 0 && (renderedRows >= balanceAt || placeSectorInRightColumn)) nextColumn();
       if (y + 8 > bottom) nextColumn();
-      drawSectorHeading(sector.name || 'Sector sin nombre');
-      sector.productIds.forEach((id) => {
-        const product = productById.get(id);
-        if (!product) return;
+      const sectorName = sector.name || 'Sector sin nombre';
+      drawSectorHeading(sectorName);
+      products.forEach((product, index) => {
+        if (!rightColumnStarted && column === 0 && renderedRows >= balanceAt) {
+          nextColumn();
+          if (index > 0) drawSectorHeading(sectorName + ' (continuación)');
+        }
         pdf.setFont('helvetica', 'normal');
         pdf.setFontSize(8);
         const nameLines = pdf.splitTextToSize(product.name, columnWidth - 27);
         const rowHeight = Math.max(5, nameLines.length * 4);
         if (y + rowHeight > bottom) {
           nextColumn();
-          drawSectorHeading((sector.name || 'Sector sin nombre') + ' (continuación)');
+          drawSectorHeading(sectorName + ' (continuación)');
         }
         pdf.setTextColor(0, 0, 0);
         pdf.setFont('helvetica', 'normal');
@@ -108,6 +123,7 @@ export default function Labels({ products }) {
         pdf.setDrawColor(210, 210, 210);
         pdf.line(columnX(), y + rowHeight - 1, columnX() + columnWidth, y + rowHeight - 1);
         y += rowHeight + 1;
+        renderedRows += 1;
       });
       y += 3;
     });
