@@ -22,6 +22,9 @@ const money = (amount) => new Intl.NumberFormat('es-AR', {
   style: 'currency', currency: 'ARS', minimumFractionDigits: 2,
 }).format(amount || 0);
 
+const normalizeSearchText = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es-AR').trim();
+const matchesSearch = (query, ...values) => { const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean); const text = normalizeSearchText(values.filter(Boolean).join(' ')); return terms.every((term) => text.includes(term)); };
+
 const businessCategories = ['Almacén', 'Bebidas', 'Lácteos', 'Fiambres', 'Panadería', 'Verdulería', 'Carnicería', 'Limpieza', 'Higiene personal', 'Golosinas', 'Snacks', 'Congelados', 'Mascotas', 'Otros'];
 
 const preloadCameraDecoder = () => { import('@zxing/browser').catch(() => {}); };
@@ -146,17 +149,17 @@ export default function App() {
 
   const total = useMemo(() => cart.reduce((sum, row) => sum + row.price * row.quantity, 0), [cart]);
   const itemCount = useMemo(() => cart.reduce((sum, row) => sum + row.quantity, 0), [cart]);
-  const normalizedQuery = query.trim().toLocaleLowerCase('es-AR');
+  const normalizedQuery = normalizeSearchText(query);
   const visibleProducts = useMemo(() => products.filter((product) => {
     const matchCategory = category === 'Todos' || product.category === category;
-    const matchQuery = !normalizedQuery || `${product.name} ${product.barcode} ${product.category}`.toLocaleLowerCase('es-AR').includes(normalizedQuery);
+    const matchQuery = !normalizedQuery || matchesSearch(normalizedQuery, product.name, product.barcode, product.detail, product.category);
     return matchCategory && matchQuery;
   }), [products, category, normalizedQuery]);
   const filteredAdminProducts = useMemo(() => {
-    const search = productCatalogQuery.trim().toLocaleLowerCase('es-AR');
+    const search = normalizeSearchText(productCatalogQuery);
     return products.filter((product) => {
-      const matchesSearch = !search || `${product.name} ${product.barcode || ''}`.toLocaleLowerCase('es-AR').includes(search);
-      return matchesSearch && (productCatalogCategory === 'Todas' || product.category === productCatalogCategory);
+      const matchesProduct = !search || matchesSearch(search, product.name, product.barcode, product.detail, product.category);
+      return matchesProduct && (productCatalogCategory === 'Todas' || product.category === productCatalogCategory);
     }).sort((a, b) => a.name.localeCompare(b.name, 'es-AR'));
   }, [products, productCatalogQuery, productCatalogCategory]);
   const trackedProducts = products.filter((product) => Number.isInteger(product.stock));

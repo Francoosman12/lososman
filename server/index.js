@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Product from './models/Product.js';
 import Sale from './models/Sale.js';
+import LabelConfig from './models/LabelConfig.js';
 import { demoProducts } from './data/demoProducts.js';
 
 const app = express();
@@ -18,6 +19,48 @@ app.get('/api/health', (_req, res) => res.json({
   database: mongoose.connection.readyState === 1,
 }));
 
+app.get('/api/labels', async (_req, res) => {
+  if (mongoose.connection.readyState !== 1) return res.status(503).json({ message: 'MongoDB no está conectado.' });
+  try {
+    const config = await LabelConfig.findOne({ key: 'main' }).lean();
+    return res.json({ sectors: config?.sectors || [], persisted: Boolean(config) });
+  } catch {
+    return res.status(500).json({ message: 'No se pudieron cargar los sectores.' });
+  }
+});
+
+app.put('/api/labels', async (req, res) => {
+  if (mongoose.connection.readyState !== 1) return res.status(503).json({ message: 'Conectá MongoDB para guardar los sectores.' });
+  const source = req.body?.sectors;
+  if (!Array.isArray(source) || source.length < 1 || source.length > 100) {
+    return res.status(400).json({ message: 'La configuración debe tener entre 1 y 100 sectores.' });
+  }
+  const sectors = [];
+  let productCount = 0;
+  for (const sector of source) {
+    const id = String(sector?.id || '').trim();
+    const name = String(sector?.name || '').trim();
+    const productIds = Array.isArray(sector?.productIds) ? [...new Set(sector.productIds.map((value) => String(value || '').trim()).filter(Boolean))] : null;
+    if (!id || id.length > 120 || name.length > 40 || !productIds || productIds.some((value) => value.length > 120)) {
+      return res.status(400).json({ message: 'Revisá los nombres y productos de los sectores.' });
+    }
+    productCount += productIds.length;
+    sectors.push({ id, name, productIds });
+  }
+  if (productCount > 20000 || new Set(sectors.map((sector) => sector.id)).size !== sectors.length) {
+    return res.status(400).json({ message: 'La configuración de sectores no es válida.' });
+  }
+  try {
+    const config = await LabelConfig.findOneAndUpdate(
+      { key: 'main' },
+      { $set: { sectors } },
+      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true },
+    ).lean();
+    return res.json({ sectors: config.sectors, persisted: true });
+  } catch {
+    return res.status(500).json({ message: 'No se pudieron guardar los sectores en MongoDB.' });
+  }
+});
 app.get('/api/products', async (_req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {

@@ -2,20 +2,74 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, Check, Download, Layers, Plus, Printer, Search, Tag, Trash2 } from 'lucide-react';
 import './labels.css';
 
+const LABELS_STORAGE_KEY = 'los-osman-label-sectors';
+const normalizeSearchText = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es-AR').trim();
+const matchesSearch = (query, ...values) => { const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean); const text = normalizeSearchText(values.filter(Boolean).join(' ')); return terms.every((term) => text.includes(term)); };
+
 const money = (amount) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(amount) || 0);
 
 export default function Labels({ products = [] }) {
   const searchRef = useRef(null);
-  const [sectors, setSectors] = useState([{ id: 'sector-1', name: 'Sector 1', productIds: [] }]);
+  const [sectors, setSectors] = useState(() => { try { const saved = JSON.parse(window.localStorage.getItem(LABELS_STORAGE_KEY)); return Array.isArray(saved) && saved.length ? saved : [{ id: 'sector-1', name: 'Sector 1', productIds: [] }]; } catch { return [{ id: 'sector-1', name: 'Sector 1', productIds: [] }]; } });
   const [activeSectorId, setActiveSectorId] = useState('sector-1');
   const [search, setSearch] = useState('');
+  const [remoteReady, setRemoteReady] = useState(false);
+  const [remoteAvailable, setRemoteAvailable] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('Cargando sectores…');
   const activeSector = sectors.find((sector) => sector.id === activeSectorId) || sectors[0];
-  const normalizedSearch = search.trim().toLocaleLowerCase('es-AR');
+  const normalizedSearch = normalizeSearchText(search);
   const filteredProducts = useMemo(() => (Array.isArray(products) ? products : []).filter((product) =>
-    !normalizedSearch || [product.name, product.barcode, product.detail, product.category].filter(Boolean).join(' ').toLocaleLowerCase('es-AR').includes(normalizedSearch)
+    !normalizedSearch || matchesSearch(normalizedSearch, product.name, product.barcode, product.detail, product.category)
   ).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es-AR')), [products, normalizedSearch]);
   const selectedCount = sectors.reduce((sum, sector) => sum + sector.productIds.length, 0);
   const productById = new Map((Array.isArray(products) ? products : []).map((product) => [String(product._id), product]));
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/labels').then(async (response) => {
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.message || 'No se pudieron cargar los sectores.');
+      return data;
+    }).then((data) => {
+      if (cancelled) return;
+      if (data?.persisted && Array.isArray(data.sectors) && data.sectors.length) setSectors(data.sectors);
+      setRemoteAvailable(true);
+      setRemoteReady(true);
+    }).catch(() => {
+      if (cancelled) return;
+      setRemoteAvailable(false);
+      setRemoteReady(true);
+      setSaveStatus('Sin conexión con MongoDB; se conserva una copia local');
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!remoteReady || !remoteAvailable) return undefined;
+    let cancelled = false;
+    setSaveStatus('Guardando en MongoDB…');
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch('/api/labels', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sectors }),
+        });
+        if (!response.ok) throw new Error('No se pudo guardar.');
+        if (!cancelled) setSaveStatus('Guardado en MongoDB');
+      } catch {
+        if (!cancelled) setSaveStatus('Error al guardar en MongoDB; hay una copia local');
+      }
+    }, 500);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [sectors, remoteReady, remoteAvailable]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(LABELS_STORAGE_KEY, JSON.stringify(sectors)); } catch { /* El catálogo sigue disponible si el navegador bloquea el almacenamiento local. */ }
+  }, [sectors]);
+
+  useEffect(() => {
+    if (!sectors.some((sector) => sector.id === activeSectorId) && sectors[0]) setActiveSectorId(sectors[0].id);
+  }, [sectors, activeSectorId]);
 
   useEffect(() => {
     if (window.matchMedia('(pointer: fine)').matches) searchRef.current?.focus({ preventScroll: true });
@@ -136,7 +190,7 @@ export default function Labels({ products = [] }) {
       <section className="labels-builder" aria-label="Configuración de etiquetas">
         <div className="labels-panel-heading"><div><Layers size={18} /><h2>Sectores y productos</h2></div><span>{selectedCount} etiquetas</span></div>
         <div className="sector-tabs" aria-label="Sectores">{sectors.map((sector) => <button type="button" key={sector.id} className={sector.id === activeSectorId ? 'active' : ''} onClick={() => setActiveSectorId(sector.id)}>{sector.name || 'Sector sin nombre'} <span>{sector.productIds.length}</span></button>)}<button type="button" className="sector-add" onClick={addSector} aria-label="Agregar sector"><Plus size={17} /></button></div>
-        <div className="sector-name-row"><label htmlFor="label-sector-name">Nombre del sector</label><div><input id="label-sector-name" value={activeSector.name} onChange={(event) => updateSectorName(event.target.value)} maxLength="40" placeholder="Ej.: Yerbas y edulcorantes" /><button type="button" onClick={removeSector} disabled={sectors.length <= 1} aria-label="Eliminar sector" title="Eliminar sector"><Trash2 size={17} /></button></div></div>
+        <p className="labels-autosave-note" role="status">{saveStatus}</p><div className="sector-name-row"><label htmlFor="label-sector-name">Nombre del sector</label><div><input id="label-sector-name" value={activeSector.name} onChange={(event) => updateSectorName(event.target.value)} maxLength="40" placeholder="Ej.: Yerbas y edulcorantes" /><button type="button" onClick={removeSector} disabled={sectors.length <= 1} aria-label="Eliminar sector" title="Eliminar sector"><Trash2 size={17} /></button></div></div>
         <label className="label-product-search"><Search size={18} /><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') event.preventDefault(); }} placeholder="Buscá por nombre o escaneá un EAN" aria-label="Buscar por nombre o código EAN" /><span>USB</span></label>
         <p className="label-scanner-hint"><Camera size={14} /> El lector USB escribe el código en el buscador. Marcá los productos que quieras incluir en este sector.</p>
         <div className="label-product-list">{filteredProducts.map((product) => {
