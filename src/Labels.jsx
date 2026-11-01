@@ -99,9 +99,9 @@ export default function Labels({ products = [] }) {
     const margin = 9;
     const gutter = 8;
     const columnWidth = (210 - margin * 2 - gutter) / 2;
-    const bottom = 288;
+    const bottom = 287;
     let column = 0;
-    let y = 20;
+    let y = 19;
     let renderedRows = 0;
     let rightColumnStarted = false;
     const printableSectors = sectors.map((sector) => ({
@@ -119,29 +119,39 @@ export default function Labels({ products = [] }) {
       pdf.setFontSize(8);
       pdf.text('Etiquetas de precios por sector', 210 - margin, 10, { align: 'right' });
       pdf.setDrawColor(125, 125, 125);
+      pdf.setLineWidth(0.3);
       pdf.line(margin, 13, 210 - margin, 13);
     };
     const nextColumn = () => {
       if (column === 0) {
         column = 1;
         rightColumnStarted = true;
-        y = 20;
+        y = 19;
       } else {
         pdf.addPage('a4', 'portrait');
         column = 0;
-        y = 20;
+        y = 19;
         drawPageHeading();
       }
     };
     const drawSectorHeading = (name) => {
-      if (y + 8 > bottom) nextColumn();
+      const x = columnX();
       pdf.setTextColor(0, 0, 0);
       pdf.setFont('helvetica', 'bold');
       pdf.setFontSize(9);
-      pdf.text(name, columnX(), y);
-      pdf.setDrawColor(125, 125, 125);
-      pdf.line(columnX(), y + 2, columnX() + columnWidth, y + 2);
-      y += 6;
+      pdf.text(name, x + 3, y + 5);
+      pdf.setDrawColor(120, 120, 120);
+      pdf.setLineWidth(0.25);
+      pdf.line(x + 3, y + 8, x + columnWidth - 3, y + 8);
+      y += 11;
+    };
+    const closeSectorFragment = (x, startY) => {
+      const height = Math.max(13, y - startY + 1.5);
+      pdf.setDrawColor(115, 125, 135);
+      pdf.setLineWidth(0.35);
+      pdf.rect(x, startY, columnWidth, height);
+      pdf.setLineWidth(0.2);
+      y = startY + height + 4;
     };
 
     pdf.setProperties({ title: 'Etiquetas de precios - LOS OSMAN', subject: 'Listas de precios por sector' });
@@ -151,39 +161,57 @@ export default function Labels({ products = [] }) {
       const distanceAfterSector = Math.abs(renderedRows + products.length - balanceAt);
       const placeSectorInRightColumn = renderedRows > 0 && distanceAfterSector >= currentDistance;
       if (!rightColumnStarted && column === 0 && (renderedRows >= balanceAt || placeSectorInRightColumn)) nextColumn();
-      if (y + 8 > bottom) nextColumn();
-      const sectorName = sector.name || 'Sector sin nombre';
-      drawSectorHeading(sectorName);
-      products.forEach((product, index) => {
-        if (!rightColumnStarted && column === 0 && renderedRows >= balanceAt) {
-          nextColumn();
-          if (index > 0) drawSectorHeading(sectorName + ' (continuación)');
+
+      let index = 0;
+      let fragmentName = sector.name || 'Sector sin nombre';
+      while (index < products.length) {
+        if (y + 22 > bottom) nextColumn();
+        const boxX = columnX();
+        const boxStartY = y;
+        drawSectorHeading(fragmentName);
+        let rowsInFragment = 0;
+
+        while (index < products.length) {
+          const product = products[index];
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(8);
+          const nameLines = pdf.splitTextToSize(product.name, columnWidth - 32);
+          const rowHeight = Math.max(6, nameLines.length * 4);
+          if (y + rowHeight + 5 > bottom) break;
+
+          pdf.setTextColor(0, 0, 0);
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(8);
+          const textOffset = (rowHeight - (nameLines.length - 1) * 4) / 2 + 0.5;
+          pdf.text(nameLines, boxX + 3, y + textOffset);
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(9);
+          const priceOffset = textOffset + ((nameLines.length - 1) * 4) / 2;
+          pdf.text(money(product.price), boxX + columnWidth - 3, y + priceOffset, { align: 'right' });
+          pdf.setDrawColor(195, 200, 205);
+          pdf.setLineWidth(0.2);
+          pdf.line(boxX + 3, y + rowHeight + 1, boxX + columnWidth - 3, y + rowHeight + 1);
+          y += rowHeight + 4;
+          index += 1;
+          renderedRows += 1;
+          rowsInFragment += 1;
         }
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(8);
-        const nameLines = pdf.splitTextToSize(product.name, columnWidth - 27);
-        const rowHeight = Math.max(5, nameLines.length * 4);
-        if (y + rowHeight > bottom) {
+
+        if (rowsInFragment === 0 && index < products.length) {
+          y = boxStartY;
           nextColumn();
-          drawSectorHeading(sectorName + ' (continuación)');
+          if (index > 0 || renderedRows >= balanceAt) fragmentName = (sector.name || 'Sector sin nombre') + ' (continuación)';
+          continue;
         }
-        pdf.setTextColor(0, 0, 0);
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(8);
-        pdf.text(nameLines, columnX(), y);
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(9);
-        pdf.text(money(product.price), columnX() + columnWidth, y, { align: 'right' });
-        pdf.setDrawColor(210, 210, 210);
-        pdf.line(columnX(), y + rowHeight - 1, columnX() + columnWidth, y + rowHeight - 1);
-        y += rowHeight + 1;
-        renderedRows += 1;
-      });
-      y += 3;
+        closeSectorFragment(boxX, boxStartY);
+        if (index < products.length) {
+          nextColumn();
+          fragmentName = (sector.name || 'Sector sin nombre') + ' (continuación)';
+        }
+      }
     });
     pdf.save('los-osman-etiquetas.pdf');
   };
-
   return <main className="labels-page">
     <header className="labels-heading"><div className="labels-title-icon"><Tag size={22} /></div><div><h1>Etiquetas de precios</h1><p>Organizá productos por sector, revisá la vista previa e imprimí.</p></div></header>
     <div className="labels-workspace">
